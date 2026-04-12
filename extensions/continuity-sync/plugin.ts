@@ -3,9 +3,9 @@
 /**
  * Continuity Sync
  *
- * Polls getPlaybackStatus() every 10s to save position, fixing the missing
- * continuity writes in Seanime's mediastream player.
- * Also saves immediately on pause.
+ * The browser sends video-status every 1 second. We listen to that stream,
+ * count ticks, and save continuity every 10 seconds while playing.
+ * Also saves immediately on pause/end/close.
  */
 function init() {
     $ui.register((ctx) => {
@@ -13,6 +13,10 @@ function init() {
         // ─── State ────────────────────────────────────────────────────────
         let mediaId: number | null = null
         let episodeNumber: number = 0
+        let currentTime: number = 0
+        let duration: number = 0
+        let ticksSinceLastSave: number = 0
+        const SAVE_EVERY_N_TICKS = 10 // video-status fires every 1s → save every 10s
 
         // ─── Tray ─────────────────────────────────────────────────────────
         const statusState = ctx.state("Idle")
@@ -30,22 +34,22 @@ function init() {
         ], { gap: 4, style: { width: "220px", padding: "10px" } }))
 
         // ─── Helpers ──────────────────────────────────────────────────────
-
-        // The actual Go PlaybackState has playbackInfo.media.id (not state.mediaId).
-        // Try both structures defensively.
         function extractMediaId(state: any): number | null {
             if (!state) return null
+            // Flat (as per d.ts types)
             if (typeof state.mediaId === "number" && state.mediaId > 0) return state.mediaId
-            const id = state?.playbackInfo?.media?.id
+            // Nested Go struct: playbackInfo.media.id
+            const id = state && state.playbackInfo && state.playbackInfo.media && state.playbackInfo.media.id
             if (typeof id === "number" && id > 0) return id
             return null
         }
 
         function extractEpisodeNumber(state: any): number {
             if (!state) return 0
-            if (typeof state.episodeNumber === "number") return state.episodeNumber
-            const ep = state?.playbackInfo?.episode
-            return ep?.progressNumber || ep?.episodeNumber || 0
+            if (typeof state.episodeNumber === "number" && state.episodeNumber > 0) return state.episodeNumber
+            const ep = state && state.playbackInfo && state.playbackInfo.episode
+            if (!ep) return 0
+            return ep.progressNumber || ep.episodeNumber || 0
         }
 
         function fmtTime(secs: number): string {
@@ -54,49 +58,44 @@ function init() {
             return m + ":" + (s < 10 ? "0" : "") + s
         }
 
-        function save(currentTime: number, duration: number, reason: string) {
-            if (!mediaId || duration <= 0 || currentTime <= 0) return
+        function save(ct: number, dur: number, reason: string) {
+            if (!mediaId || dur <= 0 || ct <= 0) return
             try {
                 ctx.continuity.updateWatchHistoryItem(mediaId, {
                     kind: "mediastream",
                     filepath: "",
                     mediaId: mediaId,
                     episodeNumber: episodeNumber,
-                    currentTime: currentTime,
-                    duration: duration,
+                    currentTime: ct,
+                    duration: dur,
                 })
-                lastSavedState.set(fmtTime(currentTime) + " (" + reason + ")")
+                lastSavedState.set(fmtTime(ct) + " / " + fmtTime(dur) + " (" + reason + ")")
                 tray.update()
             } catch (e) { }
         }
 
-        // ─── Refresh mediaId from current state ───────────────────────────
-        function refreshMediaId() {
-            try {
-                const state = ctx.videoCore.getPlaybackState()
-                if (!state) return
+        // ─── Bootstrap: pick up already-active playback ───────────────────
+        try {
+            const state = ctx.videoCore.getPlaybackState()
+            if (state) {
                 const id = extractMediaId(state)
                 if (id) {
                     mediaId = id
                     episodeNumber = extractEpisodeNumber(state)
+                    statusState.set("Watching ep " + episodeNumber)
+                    tray.update()
                 }
-            } catch (e) { }
-        }
+            }
+        } catch (e) { }
 
-        // Bootstrap: pick up already-playing video
-        refreshMediaId()
-        if (mediaId) {
-            statusState.set("Watching ep " + episodeNumber)
-            tray.update()
-        }
-
-        // ─── Events (display + immediate save on pause) ───────────────────
+        // ─── video-loaded / video-playback-state: capture mediaId ─────────
         ctx.videoCore.addEventListener("video-loaded", (e) => {
             const id = extractMediaId(e.state)
             if (id) {
                 mediaId = id
                 episodeNumber = extractEpisodeNumber(e.state)
             }
+            ticksSinceLastSave = 0
             statusState.set("Watching ep " + episodeNumber)
             tray.update()
         })
@@ -111,46 +110,57 @@ function init() {
             tray.update()
         })
 
+        // ─── video-status: fires every 1s — count ticks, save every 10 ───
+        ctx.videoCore.addEventListener("video-status", (e) => {
+            currentTime = e.currentTime
+            duration = e.duration
+
+            if (e.paused || !mediaId || currentTime <= 0 || duration <= 0) return
+
+            ticksSinceLastSave++
+            if (ticksSinceLastSave >= SAVE_EVERY_N_TICKS) {
+                ticksSinceLastSave = 0
+                save(currentTime, duration, "auto")
+            }
+
+            // Update tray display every 5s
+            if (ticksSinceLastSave % 5 === 0) {
+                statusState.set("Ep " + episodeNumber + " @ " + fmtTime(currentTime))
+                tray.update()
+            }
+        })
+
+        // ─── Save immediately on pause/end/close ──────────────────────────
         ctx.videoCore.addEventListener("video-paused", (e) => {
+            currentTime = e.currentTime
+            duration = e.duration
+            ticksSinceLastSave = 0
             statusState.set("Paused ep " + episodeNumber)
             tray.update()
             save(e.currentTime, e.duration, "paused")
         })
 
         ctx.videoCore.addEventListener("video-resumed", (_e) => {
+            ticksSinceLastSave = 0
             statusState.set("Watching ep " + episodeNumber)
             tray.update()
         })
 
         ctx.videoCore.addEventListener("video-terminated", (_e) => {
+            save(currentTime, duration, "closed")
             statusState.set("Idle")
             mediaId = null
+            ticksSinceLastSave = 0
             tray.update()
         })
 
-        // ─── Main loop: poll every 10s and save if playing ────────────────
-        ctx.setInterval(() => {
-            try {
-                const status = ctx.videoCore.getPlaybackStatus()
-
-                if (!status || status.paused || !status.currentTime || !status.duration) {
-                    // No active playback
-                    if (!mediaId) {
-                        statusState.set("Idle")
-                        tray.update()
-                    }
-                    return
-                }
-
-                // If we don't have a mediaId yet, try to fetch it
-                if (!mediaId) refreshMediaId()
-
-                statusState.set("Watching ep " + episodeNumber)
-                tray.update()
-
-                save(status.currentTime, status.duration, "auto")
-            } catch (e) { }
-        }, 10000)
+        ctx.videoCore.addEventListener("video-ended", (_e) => {
+            save(currentTime, duration, "ended")
+            statusState.set("Idle")
+            mediaId = null
+            ticksSinceLastSave = 0
+            tray.update()
+        })
 
         tray.update()
     })
