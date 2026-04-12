@@ -1,0 +1,19 @@
+{
+    "id": "jbcbro-always-dub",
+    "name": "Always Dub",
+    "version": "1.0.0",
+    "manifestURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/always-dub/manifest.json",
+    "language": "typescript",
+    "type": "plugin",
+    "description": "Automatically switches online streaming to dubbed audio when the player loads.",
+    "author": "Jbcbro",
+    "payload": "/// <reference path=\"./plugin.d.ts\" />\n\n/**\n * Always Dub\n *\n * When the online streaming player loads, automatically clicks \"Switch to dub\"\n * if the player is in sub mode. Does nothing if dub is already selected.\n */\nfunction init() {\n    $ui.register((ctx) => {\n        let isOnlinestreamPage = false\n        let hasSwitched = false\n\n        ctx.screen.onNavigate((e) => {\n            const wasOnPage = isOnlinestreamPage\n            isOnlinestreamPage = e.pathname === \"/onlinestream\"\n            // Reset on each fresh navigation to the onlinestream page\n            if (!wasOnPage && isOnlinestreamPage) {\n                hasSwitched = false\n            }\n        })\n\n        // Pick up current page in case the plugin loads mid-session\n        ctx.screen.loadCurrent()\n\n        // Watch for the dub toggle button to appear in the DOM.\n        // The button reads \"Switch to dub\" when sub is active, \"Switch to subs\" when dub is active.\n        ctx.dom.observe(\"button\", (buttons) => {\n            if (!isOnlinestreamPage || hasSwitched) return\n\n            for (let i = 0; i < buttons.length; i++) {\n                const text = buttons[i].textContent\n                if (text && text.trim() === \"Switch to dub\") {\n                    hasSwitched = true\n                    // DOMElement has no click() — inject a script to trigger it natively\n                    ctx.dom.createElement(\"script\").then((script) => {\n                        script.setInnerHTML(\n                            \"(function(){\" +\n                            \"var b=document.querySelectorAll('button');\" +\n                            \"for(var i=0;i<b.length;i++){\" +\n                            \"if(b[i].textContent&&b[i].textContent.trim()==='Switch to dub'){\" +\n                            \"b[i].click();break;\" +\n                            \"}}\" +\n                            \"if(document.currentScript)document.currentScript.remove();\" +\n                            \"})()\"\n                        )\n                        ctx.dom.queryOne(\"body\").then((body) => {\n                            if (body) body.appendChild(script)\n                        })\n                    })\n                    break\n                }\n            }\n        })\n    })\n}",
+    "plugin": {
+        "version": "1",
+        "permissions": {
+            "dom-script-manipulation": {
+                "reason": "Required to programmatically click the dub toggle button, since the DOM API does not expose a click() method on elements."
+            }
+        }
+    }
+}
