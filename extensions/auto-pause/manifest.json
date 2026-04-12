@@ -1,7 +1,7 @@
 {
     "id": "jbcbro-auto-pause",
     "name": "Auto Pause",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "manifestURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/auto-pause/manifest.json",
     "language": "typescript",
     "type": "plugin",
