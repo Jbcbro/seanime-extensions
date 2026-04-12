@@ -4,14 +4,15 @@
  * Dub Tracker
  *
  * Places CC / DUB episode-count badges on anime thumbnail cards.
+ * Uses a self-hosted aniwatch-api instance for reliable sub/dub counts.
  * Enable Debug Mode in the tray to diagnose issues.
- * Requests are throttled (one per 2s interval) to avoid rate limiting.
  */
 function init() {
     $ui.register(async (ctx) => {
 
         // ─── Storage helpers ──────────────────────────────────────────────
-        const CACHE_PREFIX = "dub-counts-v1-"
+        const CACHE_PREFIX = "dub-counts-v2-"
+        const ANIWATCH_BASE = "https://aniwatch-api.jc-server.com"
 
         function getCached(id: string): { sub: number; dub: number } | null {
             try { return $storage.get<{ sub: number; dub: number }>(CACHE_PREFIX + id) || null } catch { return null }
@@ -59,9 +60,20 @@ function init() {
 
         ctx.registerEventHandler("clear-cache", async () => {
             const processed = await ctx.dom.query("[data-sdt-checked='true']")
-            for (const el of processed) await el.removeAttribute("data-sdt-checked")
+            const clearedIds = new Set<string>()
+            for (const el of processed) {
+                const mediaId = await extractMediaId(el)
+                if (mediaId && !clearedIds.has(mediaId)) {
+                    clearedIds.add(mediaId)
+                    try { $storage.remove(CACHE_PREFIX + mediaId) } catch { }
+                }
+                await el.removeAttribute("data-sdt-checked")
+                await el.removeAttribute("data-sdt-retries")
+            }
             const badges = await ctx.dom.query(".sdt-wrapper")
             for (const b of badges) await b.remove()
+            const badged = await ctx.dom.query("[data-sdt-badge='true']")
+            for (const el of badged) await el.removeAttribute("data-sdt-badge")
             fetchQueue.length = 0
             queueElements.clear()
             cardsFound.set(0)
@@ -131,25 +143,24 @@ function init() {
         }
 
         // ─── Throttled fetch queue ────────────────────────────────────────
-        // The interval tick processes ONE item from the queue per 2s, naturally
-        // throttling requests to avoid rate limiting.
+        // One fetch per 2s interval tick — avoids hammering the API.
         const fetchQueue: string[] = []
-        const queueElements = new Map<string, any>()  // mediaId -> card element
+        const queueElements = new Map<string, any[]>()
         let fetchInProgress = false
 
         async function drainOne() {
             if (fetchInProgress || fetchQueue.length === 0) return
             const mediaId = fetchQueue.shift()!
             queueSize.set(fetchQueue.length)
-            const el = queueElements.get(mediaId)
+            const elements = queueElements.get(mediaId) || []
             queueElements.delete(mediaId)
+            if (elements.length === 0) return
 
-            if (!el) return
-
-            // Check cache again (may have been populated by a parallel path)
             const cached = getCached(mediaId)
             if (cached) {
-                if (cached.sub > 0 || cached.dub > 0) await addBadge(el, cached)
+                if (cached.sub > 0 || cached.dub > 0) {
+                    for (const el of elements) await addBadge(el, cached)
+                }
                 return
             }
 
@@ -159,7 +170,9 @@ function init() {
 
             try {
                 const counts = await fetchEpisodeCounts(mediaId)
-                if (counts && (counts.sub > 0 || counts.dub > 0)) await addBadge(el, counts)
+                if (counts && (counts.sub > 0 || counts.dub > 0)) {
+                    for (const el of elements) await addBadge(el, counts)
+                }
             } catch (e) {
                 dbg("drainOne error: " + e)
             } finally {
@@ -172,13 +185,17 @@ function init() {
         }
 
         function enqueueCard(mediaId: string, el: any) {
-            if (queueElements.has(mediaId) || fetchQueue.includes(mediaId)) return
+            const existing = queueElements.get(mediaId)
+            if (existing) {
+                existing.push(el)
+                return
+            }
             fetchQueue.push(mediaId)
-            queueElements.set(mediaId, el)
+            queueElements.set(mediaId, [el])
             queueSize.set(fetchQueue.length)
         }
 
-        // ─── Fetch episode counts ─────────────────────────────────────────
+        // ─── Fetch episode counts via aniwatch-api ────────────────────────
         const inflight = new Set<string>()
 
         async function fetchEpisodeCounts(mediaId: string): Promise<{ sub: number; dub: number } | null> {
@@ -186,9 +203,9 @@ function init() {
             if (cached) { dbg("Cache hit: " + mediaId); return cached }
             if (inflight.has(mediaId)) return null
             inflight.add(mediaId)
-            dbg("Fetching AniList for " + mediaId)
 
             try {
+                // 1. Resolve title via AniList
                 const aniRes = await ctx.fetch("https://graphql.anilist.co", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -205,41 +222,29 @@ function init() {
                 if (!title) { dbg("No title for " + mediaId); return null }
                 dbg("Title: " + title)
 
+                // 2. Search aniwatch-api — returns {sub, dub} directly, no scraping
                 const searchRes = await ctx.fetch(
-                    "https://ajax.gogo-load.com/site/loadAjaxSearch?keyword=" +
-                    encodeURIComponent(title) +
-                    "&id=-1&link_web=https://gogoanime3.co/",
-                    { headers: { Referer: "https://gogoanime3.co/" } }
+                    ANIWATCH_BASE + "/api/v2/hianime/search?q=" + encodeURIComponent(title),
                 )
-                const searchJson = await searchRes.json()
-                const html: string = searchJson?.content || ""
-                const slugMatch = html.match(/href="\/category\/([^"]+)"/)
-                if (!slugMatch) { dbg("No slug for: " + title); return null }
+                const searchData = await searchRes.json()
+                const animes: any[] = searchData?.data?.animes || []
 
-                const subSlug = slugMatch[1].replace(/-dub$/, "")
-                const dubSlug = subSlug + "-dub"
-                dbg("Slugs: " + subSlug + " / " + dubSlug)
+                if (animes.length === 0) { dbg("No results for: " + title); return null }
 
-                async function epCount(slug: string): Promise<number> {
-                    try {
-                        const r = await ctx.fetch("https://gogoanime3.co/category/" + slug, {
-                            headers: { Referer: "https://gogoanime3.co/" },
-                        })
-                        const pageHtml = await r.text()
-                        const re = /ep_end="(\d+)"/g
-                        let m: any, last = 0
-                        while ((m = re.exec(pageHtml)) !== null) {
-                            const n = parseInt(m[1])
-                            if (n > last) last = n
-                        }
-                        dbg(slug + " ep count: " + last)
-                        return last
-                    } catch (e) { dbg("epCount error: " + e); return 0 }
+                // Pick the best match: exact name match first, otherwise first result
+                const titleLower = title.toLowerCase()
+                const match = animes.find((a: any) =>
+                    a.name && a.name.toLowerCase() === titleLower
+                ) || animes[0]
+
+                const eps = match?.episodes
+                if (!eps) { dbg("No episode data for: " + title); return null }
+
+                const result = {
+                    sub: typeof eps.sub === "number" ? eps.sub : 0,
+                    dub: typeof eps.dub === "number" ? eps.dub : 0,
                 }
-
-                const sub = await epCount(subSlug)
-                const dub = await epCount(dubSlug)
-                const result = { sub, dub }
+                dbg(title + " → sub:" + result.sub + " dub:" + result.dub)
                 setCached(mediaId, result)
                 return result
             } catch (e) {
@@ -254,7 +259,6 @@ function init() {
         async function addBadge(el: any, counts: { sub: number; dub: number }) {
             try {
                 const wrapper = await ctx.dom.createElement("div")
-
                 await wrapper.setProperty("className", "sdt-wrapper sdt-hide-on-hover")
                 await wrapper.setProperty("style",
                     "position:absolute;top:6px;right:4px;z-index:10;" +
@@ -284,7 +288,7 @@ function init() {
 
                 badgesAdded.set(badgesAdded.get() + 1)
                 tray.update()
-                dbg("Badge added for: " + counts.sub + "/" + counts.dub)
+                dbg("Badge added: CC " + counts.sub + " / DUB " + counts.dub)
             } catch (e) {
                 dbg("addBadge error: " + e)
             }
@@ -315,7 +319,6 @@ function init() {
                     return
                 }
 
-                // Add to throttled queue instead of fetching immediately
                 enqueueCard(mediaId, el)
             } catch (e) {
                 dbg("processCard error: " + e)
@@ -330,7 +333,7 @@ function init() {
             for (const el of elements) await processCard(el)
         }, { identifyChildren: true, withInnerHTML: true })
 
-        // Every 2s: scan for missed cards AND drain one item from the fetch queue
+        // Every 2s: scan for missed cards AND drain one fetch from the queue
         ctx.setInterval(async () => {
             const unchecked = await ctx.dom.query(
                 SELECTOR + ":not([data-sdt-checked='true'])",
@@ -338,8 +341,6 @@ function init() {
             )
             if (unchecked.length > 0) dbg("Interval found " + unchecked.length + " unchecked")
             for (const el of unchecked) await processCard(el)
-
-            // Process one queued fetch per tick (rate limiting)
             await drainOne()
         }, 2000)
 
