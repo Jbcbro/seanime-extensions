@@ -1,7 +1,7 @@
 {
     "id": "jbcbro-dub-tracker",
     "name": "Dub Tracker",
-    "version": "3.2.0",
+    "version": "3.2.1",
     "manifestURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/dub-tracker/manifest.json",
     "language": "typescript",
     "type": "plugin",

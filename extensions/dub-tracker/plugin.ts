@@ -20,6 +20,7 @@ function init() {
             "a[href*='?id=']",
             "a[href*='&id=']",
         ].join(", ")
+        const CACHE_PREFIX = "dub-counts-v4-"
 
         const debugRef = ctx.fieldRef("false")
         const apiRef = ctx.fieldRef("https://aniwatch-api.jc-server.com")
@@ -40,6 +41,20 @@ function init() {
 
         function dbg(msg: string) {
             if (isDebug()) ctx.toast.info("[DubTracker] " + msg)
+        }
+
+        function getCachedCounts(mediaId: string): { sub: number; dub: number } | null {
+            try {
+                return $storage.get<{ sub: number; dub: number }>(CACHE_PREFIX + mediaId) || null
+            } catch {
+                return null
+            }
+        }
+
+        function setCachedCounts(mediaId: string, counts: { sub: number; dub: number } | null) {
+            try {
+                $storage.set(CACHE_PREFIX + mediaId, counts)
+            } catch { }
         }
 
         const tray = ctx.newTray({
@@ -74,6 +89,7 @@ function init() {
             cardsFound.set(0)
             badgesAdded.set(0)
             queueSize.set(0)
+            countsByMediaId.clear()
             unresolvedIds.clear()
             statusState.set("Rescanning")
             detailState.set("Cleared DOM badges")
@@ -149,6 +165,12 @@ function init() {
         async function resolveCountsForMediaId(mediaId: string): Promise<{ sub: number; dub: number } | null> {
             if (countsByMediaId.has(mediaId)) return countsByMediaId.get(mediaId) || null
 
+            const cached = getCachedCounts(mediaId)
+            if (cached) {
+                countsByMediaId.set(mediaId, cached)
+                return cached
+            }
+
             try {
                 const aniRes = await ctx.fetch("https://graphql.anilist.co", {
                     method: "POST",
@@ -168,6 +190,7 @@ function init() {
                 const title = titles[0] || ""
                 if (!title) {
                     countsByMediaId.set(mediaId, null)
+                    setCachedCounts(mediaId, null)
                     return null
                 }
 
@@ -176,6 +199,7 @@ function init() {
                     detailState.set("API search failed: " + searchRes.status)
                     tray.update()
                     countsByMediaId.set(mediaId, null)
+                    setCachedCounts(mediaId, null)
                     return null
                 }
 
@@ -183,6 +207,7 @@ function init() {
                 const animes = searchData?.data?.animes || []
                 if (!animes.length) {
                     countsByMediaId.set(mediaId, null)
+                    setCachedCounts(mediaId, null)
                     return null
                 }
 
@@ -194,6 +219,7 @@ function init() {
                 const eps = match?.episodes
                 if (!eps) {
                     countsByMediaId.set(mediaId, null)
+                    setCachedCounts(mediaId, null)
                     return null
                 }
 
@@ -202,12 +228,14 @@ function init() {
                     dub: typeof eps.dub === "number" ? eps.dub : 0,
                 }
                 countsByMediaId.set(mediaId, result)
+                setCachedCounts(mediaId, result)
                 detailState.set((match?.name || title) + " → CC " + result.sub + " / DUB " + result.dub)
                 tray.update()
                 return result
             } catch (e) {
                 dbg("resolve error: " + e)
                 countsByMediaId.set(mediaId, null)
+                setCachedCounts(mediaId, null)
                 detailState.set("Resolve error")
                 tray.update()
                 return null
@@ -295,6 +323,15 @@ function init() {
 
                     await el.setAttribute("data-sdt-checked", "true")
                     cardsFound.set(cardsFound.get() + 1)
+
+                    const cached = getCachedCounts(mediaId)
+                    if (cached) {
+                        countsByMediaId.set(mediaId, cached)
+                        if (cached.sub > 0 || cached.dub > 0) {
+                            await addBadge(el, cached)
+                        }
+                        continue
+                    }
 
                     if (!countsByMediaId.has(mediaId) && !unresolvedIds.has(mediaId)) {
                         unresolvedIds.add(mediaId)
