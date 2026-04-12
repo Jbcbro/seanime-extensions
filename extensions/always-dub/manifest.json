@@ -11,8 +11,10 @@
     "plugin": {
         "version": "1",
         "permissions": {
-            "dom-script-manipulation": {
-                "reason": "Required to programmatically click the dub toggle button, since the DOM API does not expose a click() method on elements."
+            "allow": {
+                "unsafeFlags": [
+                    { "flag": "dom-script-manipulation" }
+                ]
             }
         }
     }

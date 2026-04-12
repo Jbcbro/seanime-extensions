@@ -41,7 +41,14 @@ extensions/
     "plugin": {
         "version": "1",
         "permissions": {
-            "playback": {}
+            "scopes": ["playback"],
+            "allow": {
+                "unsafeFlags": [{ "flag": "dom-script-manipulation" }],
+                "networkAccess": {
+                    "allowedDomains": ["example.com"],
+                    "reasoning": "Why access is needed"
+                }
+            }
         }
     }
 }
@@ -193,12 +200,40 @@ ctx.continuity.deleteWatchHistoryItem(mediaId)
 
 ## Permissions Reference
 
-| Key | Purpose |
-|-----|---------|
-| `playback` | VideoCore + external player control |
-| `networkAccess` | HTTP requests (requires `allowedDomains`) |
-| `dom-script-manipulation` | Inject JS / manipulate script tags |
-| `dom-link-manipulation` | Manipulate link tags |
+Permissions live in `plugin.permissions` in the manifest.
+
+### `scopes` (array of strings)
+Named permission scopes — user must acknowledge before plugin loads:
+
+| Scope | Purpose |
+|-------|---------|
+| `playback` | VideoCore + external player control (`ctx.videoCore`, `ctx.playback`) |
+| `storage` | Plugin key-value storage (`$storage`) |
+| `database` | Read/write Seanime database |
+| `anilist` | AniList client (`$anilist`) |
+| `anilist-token` | Access the raw AniList token |
+| `system` | OS/Filesystem/Filepath APIs |
+| `cron` | Cron job scheduling |
+| `notification` | System notifications |
+| `discord` | Discord RPC |
+| `torrent-client` | Torrent client control |
+
+### `allow` (object)
+Lower-level allowlist — goes under `"allow"` key:
+
+| Field | Purpose |
+|-------|---------|
+| `unsafeFlags` | Array of `{ "flag": "..." }` objects — disables auto-updates, shows warning |
+| `networkAccess` | `{ "allowedDomains": [...], "reasoning": "..." }` |
+| `readPaths` | Array of filesystem paths the plugin may read |
+| `writePaths` | Array of filesystem paths the plugin may write |
+| `commandScopes` | Array of allowed shell commands |
+
+### Unsafe flags
+| Flag | Purpose |
+|------|---------|
+| `dom-script-manipulation` | Inject arbitrary JS via `<script>` tags |
+| `dom-link-manipulation` | Manipulate `<link>` tags |
 
 ---
 
