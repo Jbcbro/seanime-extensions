@@ -32,11 +32,12 @@ extensions/
     "id": "unique-plugin-id",
     "name": "Display Name",
     "version": "1.0.0",
+    "manifestURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/my-plugin/manifest.json",
     "language": "typescript",
     "type": "plugin",
     "description": "What it does",
     "author": "Jbcbro",
-    "payloadURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/my-plugin/plugin.ts",
+    "payload": "<plugin source code as a JSON-escaped string>",
     "plugin": {
         "version": "1",
         "permissions": {
@@ -46,9 +47,14 @@ extensions/
 }
 ```
 
-- `isDevelopment: true` enables hot-reload during local dev (remove before publishing)
-- `payloadURI` must be a raw GitHub URL for production use
+- `manifestURI` — self-referencing URL to this manifest file (required)
+- `payload` — the entire plugin source code embedded as a JSON string (NOT a separate file URL)
+- `isDevelopment: true` + `payloadURI` to local path can be used during local dev only
 - Plugin IDs must be globally unique
+
+**Important:** The plugin code must be embedded directly in `payload` as a JSON-escaped string.
+The `plugin.ts` source file is kept separately in the repo for readability, but the manifest
+is what Seanime actually reads — keep both in sync.
 
 ---
 
