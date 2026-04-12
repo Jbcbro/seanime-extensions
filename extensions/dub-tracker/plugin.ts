@@ -49,7 +49,8 @@ function init() {
             tray.text("Dub Tracker", { style: { fontWeight: "bold", fontSize: "1rem" } }),
             tray.text("Status: " + statusState.get(), { style: { fontSize: "0.8rem", color: "#aaa" } }),
             tray.text("Cards: " + cardsFound.get() + " | Badges: " + badgesAdded.get() + " | Queue: " + queueSize.get(), { style: { fontSize: "0.8rem", color: "#aaa" } }),
-            tray.input("API Base URL", { fieldRef: apiBaseRef, placeholder: DEFAULT_API_BASE }),
+            tray.text("API Base URL", { style: { fontSize: "0.8rem", color: "#aaa" } }),
+            tray.input({ fieldRef: apiBaseRef, placeholder: DEFAULT_API_BASE }),
             tray.select("Debug Mode", {
                 options: [{ label: "Off", value: "false" }, { label: "On", value: "true" }],
                 fieldRef: debugRef,
