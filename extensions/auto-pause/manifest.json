@@ -1,0 +1,16 @@
+{
+    "id": "jbcbro-auto-pause",
+    "name": "Auto Pause",
+    "version": "1.0.0",
+    "language": "typescript",
+    "type": "plugin",
+    "description": "Automatically pauses the video when it loads instead of auto-playing.",
+    "author": "Jbcbro",
+    "payloadURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/auto-pause/plugin.ts",
+    "plugin": {
+        "version": "1",
+        "permissions": {
+            "playback": {}
+        }
+    }
+}
