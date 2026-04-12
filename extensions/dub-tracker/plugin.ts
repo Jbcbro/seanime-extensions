@@ -18,6 +18,7 @@ function init() {
         const debugRef = ctx.fieldRef("false")
         const apiRef = ctx.fieldRef("https://aniwatch-api.jc-server.com")
         const statusState = ctx.state("Ready")
+        const detailState = ctx.state("Idle")
         const cardsFound = ctx.state(0)
         const badgesAdded = ctx.state(0)
         const queueSize = ctx.state(0)
@@ -57,6 +58,7 @@ function init() {
                 fieldRef: debugRef,
             }),
             tray.text("Status: " + statusState.get(), { style: { fontSize: "0.8rem", color: "#888" } }),
+            tray.text(detailState.get(), { style: { fontSize: "0.75rem", color: "#888" } }),
             tray.text("Cards: " + cardsFound.get() + " | Badges: " + badgesAdded.get() + " | Queue: " + queueSize.get(), { style: { fontSize: "0.8rem", color: "#888" } }),
             tray.button("Rescan", { onClick: "rescan", intent: "primary", style: { width: "100%" } }),
         ], { gap: 6, style: { width: "250px", padding: "10px" } }))
@@ -77,6 +79,7 @@ function init() {
             badgesAdded.set(0)
             queueSize.set(0)
             statusState.set("Rescanning")
+            detailState.set("Cleared badges and queue")
             tray.update()
         })
 
@@ -147,43 +150,71 @@ function init() {
             if (inflight.has(mediaId)) return null
             inflight.add(mediaId)
 
+            function normalizeTitle(value: string): string {
+                return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+            }
+
             try {
                 const aniRes = await ctx.fetch("https://graphql.anilist.co", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        query: "query($id:Int){Media(id:$id){title{english romaji}}}",
+                        query: "query($id:Int){Media(id:$id){title{english romaji native}}}",
                         variables: { id: parseInt(mediaId, 10) },
                     }),
                 })
                 const aniData = await aniRes.json()
-                const title = aniData?.data?.Media?.title?.english || aniData?.data?.Media?.title?.romaji || ""
-                if (!title) return null
+                const titles = [
+                    aniData?.data?.Media?.title?.english,
+                    aniData?.data?.Media?.title?.romaji,
+                    aniData?.data?.Media?.title?.native,
+                ].filter(Boolean)
+                const title = titles[0] || ""
+                if (!title) {
+                    detailState.set("No AniList title for " + mediaId)
+                    tray.update()
+                    return null
+                }
 
                 const searchRes = await ctx.fetch(apiRef.current + "/api/v2/hianime/search?q=" + encodeURIComponent(title))
                 if (searchRes.status !== 200) {
                     dbg("search failed: " + searchRes.status)
+                    detailState.set("API search failed: " + searchRes.status)
+                    tray.update()
                     return null
                 }
 
                 const searchData = await searchRes.json()
                 const animes = searchData?.data?.animes || []
-                if (!animes.length) return null
+                if (!animes.length) {
+                    detailState.set("No search results for " + title)
+                    tray.update()
+                    return null
+                }
 
-                const titleLower = title.toLowerCase()
-                const match = animes.find((a: any) => a?.name && a.name.toLowerCase() === titleLower) || animes[0]
+                const normalizedTitles = titles.map(normalizeTitle)
+                const match = animes.find((a: any) => normalizedTitles.includes(normalizeTitle(a?.name || ""))) ||
+                    animes.find((a: any) => normalizedTitles.some((t: string) => normalizeTitle(a?.name || "").includes(t) || t.includes(normalizeTitle(a?.name || "")))) ||
+                    animes[0]
                 const eps = match?.episodes
-                if (!eps) return null
+                if (!eps) {
+                    detailState.set("No episode data for " + (match?.name || title))
+                    tray.update()
+                    return null
+                }
 
                 const result = {
                     sub: typeof eps.sub === "number" ? eps.sub : 0,
                     dub: typeof eps.dub === "number" ? eps.dub : 0,
                 }
                 setCached(mediaId, result)
+                detailState.set((match?.name || title) + " → CC " + result.sub + " / DUB " + result.dub)
+                tray.update()
                 return result
             } catch (e) {
                 dbg("fetch error: " + e)
                 statusState.set("Fetch error")
+                detailState.set(String(e))
                 tray.update()
                 return null
             } finally {
@@ -194,13 +225,22 @@ function init() {
         async function addBadge(el: any, counts: { sub: number; dub: number }) {
             try {
                 let target = el
-                try {
-                    const parent = await el.getParent()
-                    if (parent) {
+                let cursor = el
+                for (let i = 0; i < 4; i++) {
+                    try {
+                        const parent = await cursor.getParent()
+                        if (!parent) break
                         const href = await parent.getAttribute("href")
-                        if (href) target = parent
+                        const mediaId = await parent.getAttribute("data-media-id")
+                        if (href || mediaId) {
+                            target = parent
+                            break
+                        }
+                        cursor = parent
+                    } catch {
+                        break
                     }
-                } catch { }
+                }
 
                 if (await target.getAttribute("data-sdt-badge")) return
 
@@ -217,9 +257,12 @@ function init() {
                 await target.append(wrapper)
                 await target.setAttribute("data-sdt-badge", "true")
                 badgesAdded.set(badgesAdded.get() + 1)
+                detailState.set("Injected badge")
                 tray.update()
             } catch (e) {
                 dbg("badge error: " + e)
+                detailState.set("Badge error: " + String(e))
+                tray.update()
             }
         }
 
@@ -267,6 +310,10 @@ function init() {
                     const retries = parseInt(await el.getAttribute("data-sdt-retries") || "0", 10)
                     if (retries >= 10) await el.setAttribute("data-sdt-checked", "true")
                     else await el.setAttribute("data-sdt-retries", String(retries + 1))
+                    if (retries === 0) {
+                        detailState.set("Could not extract media ID")
+                        tray.update()
+                    }
                     return
                 }
 
@@ -302,6 +349,7 @@ function init() {
         }, 2000)
 
         statusState.set("Running")
+        detailState.set("Watching cards")
         tray.update()
         ctx.toast.info("Dub Tracker loaded")
     })
