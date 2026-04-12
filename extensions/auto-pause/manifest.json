@@ -1,17 +1,19 @@
 {
     "id": "jbcbro-auto-pause",
     "name": "Auto Pause",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "manifestURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/auto-pause/manifest.json",
     "language": "typescript",
     "type": "plugin",
     "description": "Automatically pauses the video when it loads instead of auto-playing.",
     "author": "Jbcbro",
-    "payload": "/// <reference path=\"./plugin.d.ts\" />\n\n/**\n * Auto Pause\n *\n * Automatically pauses the video when it first becomes ready to play,\n * instead of auto-playing. The user must manually press play.\n */\nfunction init() {\n    $ui.register((ctx) => {\n        // Track whether we've paused for the current video load.\n        // Reset on each new video so we only pause once per load, not on resume.\n        let pausedForCurrentLoad = false\n\n        ctx.videoCore.addEventListener(\"video-loaded\", () => {\n            pausedForCurrentLoad = false\n        })\n\n        ctx.videoCore.addEventListener(\"video-can-play\", () => {\n            if (!pausedForCurrentLoad) {\n                pausedForCurrentLoad = true\n                ctx.videoCore.pause()\n            }\n        })\n    })\n}",
+    "payload": "/// <reference path=\"./plugin.d.ts\" />\n\n/**\n * Auto Pause\n *\n * Automatically pauses the video when it first becomes ready to play,\n * instead of auto-playing. The user must manually press play.\n */\nfunction init() {\n    $ui.register((ctx) => {\n        // Allow up to two automatic pauses right after a load starts:\n        // one for the initial autoplay, and one more if switching to dub\n        // re-triggers playback a moment later.\n        let pauseAttemptsForCurrentLoad = 0\n        let loadStartedAt = 0\n\n        function resetPauseWindow() {\n            pauseAttemptsForCurrentLoad = 0\n            loadStartedAt = Date.now()\n        }\n\n        ctx.videoCore.addEventListener(\"video-loaded\", () => {\n            resetPauseWindow()\n        })\n\n        ctx.videoCore.addEventListener(\"video-can-play\", () => {\n            if (loadStartedAt === 0) resetPauseWindow()\n            if (Date.now() - loadStartedAt > 15000) return\n            if (pauseAttemptsForCurrentLoad >= 2) return\n\n            try {\n                const status = ctx.videoCore.getPlaybackStatus()\n                if (status && status.paused) return\n            } catch { }\n\n            pauseAttemptsForCurrentLoad += 1\n            ctx.videoCore.pause()\n        })\n    })\n}\n",
     "plugin": {
         "version": "1",
         "permissions": {
-            "scopes": ["playback"]
+            "scopes": [
+                "playback"
+            ]
         }
     }
 }
