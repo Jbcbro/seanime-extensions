@@ -1,0 +1,33 @@
+name: Refresh Dub Tracker Dataset
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 */6 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate dataset
+        run: node extensions/dub-tracker/scripts/generate-dataset.mjs
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extensions/dub-tracker/data/counts.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Refresh dub-tracker dataset"
+          git push

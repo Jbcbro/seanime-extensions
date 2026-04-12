@@ -3,16 +3,11 @@
 /**
  * Dub Tracker
  *
- * Resolves visible AniList IDs into CC / DUB counts, caches them in memory,
- * then renders badges from that local map.
+ * Renders CC / DUB badges from a prebuilt AniList-ID dataset so badges can
+ * appear immediately after the page DOM is ready.
  */
 function init() {
     $ui.register(async (ctx) => {
-        const API_OPTIONS = [
-            { label: "Aniwatch API", value: "https://aniwatch-api.jc-server.com" },
-            { label: "Anime DB", value: "https://anime-db.videasy.net" },
-        ]
-
         const SELECTOR = [
             "[data-media-entry-card-body='true']",
             "[data-media-entry-card-hover-popup-banner-container='true']",
@@ -20,22 +15,21 @@ function init() {
             "a[href*='?id=']",
             "a[href*='&id=']",
         ].join(", ")
-        const CACHE_PREFIX = "dub-counts-v4-"
-        const RELEASING_TTL_MS = 6 * 60 * 60 * 1000
-        const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
+        const DATASET_URL = "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/dub-tracker/data/counts.json"
+        const STORAGE_KEY = "dub-tracker-dataset-v1"
+        const DATASET_TTL_MS = 6 * 60 * 60 * 1000
 
         const debugRef = ctx.fieldRef("false")
-        const apiRef = ctx.fieldRef("https://aniwatch-api.jc-server.com")
-        const statusState = ctx.state("Ready")
-        const detailState = ctx.state("Idle")
+        const statusState = ctx.state("Starting")
+        const detailState = ctx.state("Loading dataset")
         const cardsFound = ctx.state(0)
         const badgesAdded = ctx.state(0)
-        const queueSize = ctx.state(0)
+        const datasetSize = ctx.state(0)
 
-        const countsByMediaId = new Map<string, { sub: number; dub: number } | null>()
-        const unresolvedIds = new Set<string>()
-        let fetchInProgress = false
+        const countsByMediaId = new Map<string, { sub: number; dub: number }>()
         let scanInProgress = false
+        let datasetFetchInProgress = false
 
         function isDebug() {
             return debugRef.current === "true"
@@ -49,44 +43,74 @@ function init() {
             return Date.now()
         }
 
-        function getCacheTtl(status?: string | null) {
-            return status === "RELEASING" ? RELEASING_TTL_MS : DEFAULT_TTL_MS
-        }
-
-        function getCachedCounts(mediaId: string): { sub: number; dub: number } | null {
+        function getStoredDataset(): { fetchedAt: number; entries: Record<string, any> } | null {
             try {
-                const raw = $storage.get<any>(CACHE_PREFIX + mediaId)
-                if (!raw) return null
-
-                // Backward compatibility with earlier plain count objects.
-                if (typeof raw.sub === "number" || typeof raw.dub === "number") {
-                    if (typeof raw.expiresAt === "number" && raw.expiresAt < getNow()) return null
-                    return {
-                        sub: typeof raw.sub === "number" ? raw.sub : 0,
-                        dub: typeof raw.dub === "number" ? raw.dub : 0,
-                    }
-                }
-
-                return null
+                return $storage.get<{ fetchedAt: number; entries: Record<string, any> }>(STORAGE_KEY) || null
             } catch {
                 return null
             }
         }
 
-        function setCachedCounts(mediaId: string, counts: { sub: number; dub: number } | null, status?: string | null) {
+        function setStoredDataset(payload: { fetchedAt: number; entries: Record<string, any> }) {
             try {
-                $storage.set(CACHE_PREFIX + mediaId, counts == null ? {
-                    sub: 0,
-                    dub: 0,
-                    status: status || null,
-                    expiresAt: getNow() + getCacheTtl(status || null),
-                } : {
-                    sub: counts.sub,
-                    dub: counts.dub,
-                    status: status || null,
-                    expiresAt: getNow() + getCacheTtl(status || null),
-                })
+                $storage.set(STORAGE_KEY, payload)
             } catch { }
+        }
+
+        function applyDatasetEntries(entries: Record<string, any>) {
+            countsByMediaId.clear()
+            for (const mediaId of Object.keys(entries || {})) {
+                const entry = entries[mediaId]
+                if (!entry) continue
+                countsByMediaId.set(mediaId, {
+                    sub: typeof entry.sub === "number" ? entry.sub : 0,
+                    dub: typeof entry.dub === "number" ? entry.dub : 0,
+                })
+            }
+            datasetSize.set(countsByMediaId.size)
+        }
+
+        async function loadDataset(forceRefresh: boolean) {
+            if (datasetFetchInProgress) return
+
+            const stored = getStoredDataset()
+            const isStoredFresh = !!stored && typeof stored.fetchedAt === "number" && (getNow() - stored.fetchedAt) < DATASET_TTL_MS
+
+            if (!forceRefresh && stored?.entries) {
+                applyDatasetEntries(stored.entries)
+                detailState.set("Cached dataset: " + countsByMediaId.size + " entries")
+                tray.update()
+                if (isStoredFresh) return
+            }
+
+            datasetFetchInProgress = true
+            statusState.set("Refreshing dataset")
+            detailState.set("Fetching latest counts")
+            tray.update()
+
+            try {
+                const response = await ctx.fetch(DATASET_URL)
+                if (response.status !== 200) {
+                    detailState.set("Dataset fetch failed: " + response.status)
+                    tray.update()
+                    return
+                }
+
+                const payload = await response.json()
+                const entries = payload?.entries || {}
+                applyDatasetEntries(entries)
+                setStoredDataset({ fetchedAt: getNow(), entries })
+                statusState.set("Running")
+                detailState.set("Dataset ready: " + countsByMediaId.size + " entries")
+                tray.update()
+            } catch (e) {
+                dbg("dataset fetch error: " + e)
+                statusState.set("Dataset error")
+                detailState.set("Could not refresh dataset")
+                tray.update()
+            } finally {
+                datasetFetchInProgress = false
+            }
         }
 
         const tray = ctx.newTray({
@@ -97,16 +121,21 @@ function init() {
 
         tray.render(() => tray.stack([
             tray.text("Dub Tracker", { style: { fontWeight: "bold", fontSize: "1rem" } }),
-            tray.select("API Host", { options: API_OPTIONS, fieldRef: apiRef }),
             tray.select("Debug Mode", {
                 options: [{ label: "Off", value: "false" }, { label: "On", value: "true" }],
                 fieldRef: debugRef,
             }),
             tray.text("Status: " + statusState.get(), { style: { fontSize: "0.8rem", color: "#888" } }),
             tray.text(detailState.get(), { style: { fontSize: "0.75rem", color: "#888" } }),
-            tray.text("Cards: " + cardsFound.get() + " | Badges: " + badgesAdded.get() + " | Queue: " + queueSize.get(), { style: { fontSize: "0.8rem", color: "#888" } }),
-            tray.button("Rescan", { onClick: "rescan", intent: "primary", style: { width: "100%" } }),
+            tray.text("Cards: " + cardsFound.get() + " | Badges: " + badgesAdded.get() + " | Dataset: " + datasetSize.get(), { style: { fontSize: "0.8rem", color: "#888" } }),
+            tray.button("Refresh Dataset", { onClick: "refresh-dataset", intent: "primary", style: { width: "100%" } }),
+            tray.button("Rescan", { onClick: "rescan", style: { width: "100%" } }),
         ], { gap: 6, style: { width: "250px", padding: "10px" } }))
+
+        ctx.registerEventHandler("refresh-dataset", async () => {
+            await loadDataset(true)
+            await scanNow("Manual refresh")
+        })
 
         ctx.registerEventHandler("rescan", async () => {
             const processed = await ctx.dom.query("[data-sdt-checked='true']")
@@ -120,10 +149,6 @@ function init() {
             for (const el of badged) await el.removeAttribute("data-sdt-badge")
             cardsFound.set(0)
             badgesAdded.set(0)
-            queueSize.set(0)
-            countsByMediaId.clear()
-            unresolvedIds.clear()
-            statusState.set("Rescanning")
             detailState.set("Cleared DOM badges")
             tray.update()
             await scanNow("Rescan")
@@ -190,113 +215,6 @@ function init() {
             return null
         }
 
-        function normalizeTitle(value: string): string {
-            return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
-        }
-
-        async function resolveCountsForMediaId(mediaId: string): Promise<{ sub: number; dub: number } | null> {
-            if (countsByMediaId.has(mediaId)) return countsByMediaId.get(mediaId) || null
-
-            const cached = getCachedCounts(mediaId)
-            if (cached) {
-                countsByMediaId.set(mediaId, cached)
-                return cached
-            }
-
-            try {
-                const aniRes = await ctx.fetch("https://graphql.anilist.co", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        query: "query($id:Int){Media(id:$id){status title{english romaji native}}}",
-                        variables: { id: parseInt(mediaId, 10) },
-                    }),
-                })
-                const aniData = await aniRes.json()
-                const mediaStatus = aniData?.data?.Media?.status || null
-                const titles = [
-                    aniData?.data?.Media?.title?.english,
-                    aniData?.data?.Media?.title?.romaji,
-                    aniData?.data?.Media?.title?.native,
-                ].filter(Boolean)
-
-                const title = titles[0] || ""
-                if (!title) {
-                    countsByMediaId.set(mediaId, null)
-                    setCachedCounts(mediaId, null, mediaStatus)
-                    return null
-                }
-
-                const searchRes = await ctx.fetch(apiRef.current + "/api/v2/hianime/search?q=" + encodeURIComponent(title))
-                if (searchRes.status !== 200) {
-                    detailState.set("API search failed: " + searchRes.status)
-                    tray.update()
-                    countsByMediaId.set(mediaId, null)
-                    setCachedCounts(mediaId, null, mediaStatus)
-                    return null
-                }
-
-                const searchData = await searchRes.json()
-                const animes = searchData?.data?.animes || []
-                if (!animes.length) {
-                    countsByMediaId.set(mediaId, null)
-                    setCachedCounts(mediaId, null, mediaStatus)
-                    return null
-                }
-
-                const normalizedTitles = titles.map(normalizeTitle)
-                const match = animes.find((a: any) => normalizedTitles.includes(normalizeTitle(a?.name || ""))) ||
-                    animes.find((a: any) => normalizedTitles.some((t: string) => normalizeTitle(a?.name || "").includes(t) || t.includes(normalizeTitle(a?.name || "")))) ||
-                    animes[0]
-
-                const eps = match?.episodes
-                if (!eps) {
-                    countsByMediaId.set(mediaId, null)
-                    setCachedCounts(mediaId, null, mediaStatus)
-                    return null
-                }
-
-                const result = {
-                    sub: typeof eps.sub === "number" ? eps.sub : 0,
-                    dub: typeof eps.dub === "number" ? eps.dub : 0,
-                }
-                countsByMediaId.set(mediaId, result)
-                setCachedCounts(mediaId, result, mediaStatus)
-                detailState.set((match?.name || title) + " → CC " + result.sub + " / DUB " + result.dub)
-                tray.update()
-                return result
-            } catch (e) {
-                dbg("resolve error: " + e)
-                countsByMediaId.set(mediaId, null)
-                setCachedCounts(mediaId, null)
-                detailState.set("Resolve error")
-                tray.update()
-                return null
-            }
-        }
-
-        async function resolveVisibleCounts(ids: string[]) {
-            if (fetchInProgress || ids.length === 0) return
-            fetchInProgress = true
-            statusState.set("Resolving")
-            queueSize.set(ids.length)
-            tray.update()
-
-            try {
-                for (let i = 0; i < ids.length; i++) {
-                    const mediaId = ids[i]
-                    queueSize.set(ids.length - i)
-                    tray.update()
-                    await resolveCountsForMediaId(mediaId)
-                }
-            } finally {
-                fetchInProgress = false
-                queueSize.set(0)
-                statusState.set("Running")
-                tray.update()
-            }
-        }
-
         async function addBadge(el: any, counts: { sub: number; dub: number }) {
             try {
                 let target = el
@@ -332,7 +250,6 @@ function init() {
                 await target.append(wrapper)
                 await target.setAttribute("data-sdt-badge", "true")
                 badgesAdded.set(badgesAdded.get() + 1)
-                detailState.set("Injected badge")
                 tray.update()
             } catch (e) {
                 dbg("badge error: " + e)
@@ -340,8 +257,6 @@ function init() {
         }
 
         async function processElements(elements: any[]) {
-            const idsToResolve: string[] = []
-
             for (const el of elements) {
                 try {
                     if (await el.getAttribute("data-sdt-checked") === "true") continue
@@ -357,18 +272,9 @@ function init() {
                     await el.setAttribute("data-sdt-checked", "true")
                     cardsFound.set(cardsFound.get() + 1)
 
-                    const cached = getCachedCounts(mediaId)
-                    if (cached) {
-                        countsByMediaId.set(mediaId, cached)
-                        if (cached.sub > 0 || cached.dub > 0) {
-                            await addBadge(el, cached)
-                        }
-                        continue
-                    }
-
-                    if (!countsByMediaId.has(mediaId) && !unresolvedIds.has(mediaId)) {
-                        unresolvedIds.add(mediaId)
-                        idsToResolve.push(mediaId)
+                    const counts = countsByMediaId.get(mediaId)
+                    if (counts && (counts.sub > 0 || counts.dub > 0)) {
+                        await addBadge(el, counts)
                     }
                 } catch (e) {
                     dbg("process error: " + e)
@@ -376,23 +282,6 @@ function init() {
             }
 
             tray.update()
-
-            await resolveVisibleCounts(idsToResolve)
-
-            for (const mediaId of idsToResolve) unresolvedIds.delete(mediaId)
-
-            for (const el of elements) {
-                try {
-                    const mediaId = await extractMediaId(el)
-                    if (!mediaId) continue
-                    const counts = countsByMediaId.get(mediaId)
-                    if (counts && (counts.sub > 0 || counts.dub > 0)) {
-                        await addBadge(el, counts)
-                    }
-                } catch (e) {
-                    dbg("render error: " + e)
-                }
-            }
         }
 
         async function scanNow(reason: string) {
@@ -413,10 +302,9 @@ function init() {
         }
 
         await injectStyles()
+        await loadDataset(false)
 
         ctx.dom.observe(SELECTOR, async (elements) => {
-            detailState.set("Observer: " + elements.length + " elements")
-            tray.update()
             await processElements(elements)
         }, { identifyChildren: true, withInnerHTML: true })
 
@@ -429,6 +317,10 @@ function init() {
         ctx.setInterval(async () => {
             await scanNow("Interval")
         }, 2000)
+
+        ctx.setInterval(async () => {
+            await loadDataset(false)
+        }, 15 * 60 * 1000)
 
         statusState.set("Running")
         detailState.set("Watching cards")
