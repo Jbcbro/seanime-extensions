@@ -8,7 +8,6 @@
  */
 function init() {
     $ui.register((ctx) => {
-        let isOnlinestreamPage = false
         let hasSwitchedForCurrentLoad = false
 
         function normalizeText(value: any) {
@@ -64,7 +63,7 @@ function init() {
                     "if(t.indexOf('dubbed')!==-1)return true;" +
                     "return t.indexOf('dub')!==-1&&(t.indexOf('audio')!==-1||t.indexOf('language')!==-1||t.indexOf('track')!==-1);" +
                     "}" +
-                    "var nodes=document.querySelectorAll('button,[role=\"button\"]');" +
+                    "var nodes=document.querySelectorAll('button');" +
                     "for(var i=0;i<nodes.length;i++){" +
                     "var node=nodes[i];" +
                     "var label=(node.textContent||'')+' '+(node.getAttribute('aria-label')||'')+' '+(node.getAttribute('title')||'');" +
@@ -81,9 +80,9 @@ function init() {
         }
 
         async function trySwitchToDub() {
-            if (!isOnlinestreamPage || hasSwitchedForCurrentLoad) return
+            if (hasSwitchedForCurrentLoad) return
 
-            const buttons = await ctx.dom.query("button, [role='button']")
+            const buttons = await ctx.dom.query("button")
             for (let i = 0; i < buttons.length; i++) {
                 if (await elementLooksLikeDubToggle(buttons[i])) {
                     hasSwitchedForCurrentLoad = true
@@ -93,26 +92,23 @@ function init() {
             }
         }
 
-        ctx.screen.onNavigate((e) => {
-            isOnlinestreamPage = e.pathname === "/onlinestream"
+        ctx.screen.onNavigate(() => {
             hasSwitchedForCurrentLoad = false
-            if (isOnlinestreamPage) trySwitchToDub()
+            trySwitchToDub()
         })
 
         ctx.screen.loadCurrent()
 
         ctx.videoCore.addEventListener("video-loaded", () => {
-            if (!isOnlinestreamPage) return
             hasSwitchedForCurrentLoad = false
             trySwitchToDub()
         })
 
         ctx.videoCore.addEventListener("video-can-play", () => {
-            if (!isOnlinestreamPage) return
             trySwitchToDub()
         })
 
-        ctx.dom.observe("button, [role='button']", () => {
+        ctx.dom.observe("button", () => {
             trySwitchToDub()
         })
     })
