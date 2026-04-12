@@ -21,6 +21,8 @@ function init() {
             "a[href*='&id=']",
         ].join(", ")
         const CACHE_PREFIX = "dub-counts-v4-"
+        const RELEASING_TTL_MS = 6 * 60 * 60 * 1000
+        const DEFAULT_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
         const debugRef = ctx.fieldRef("false")
         const apiRef = ctx.fieldRef("https://aniwatch-api.jc-server.com")
@@ -43,17 +45,47 @@ function init() {
             if (isDebug()) ctx.toast.info("[DubTracker] " + msg)
         }
 
+        function getNow() {
+            return Date.now()
+        }
+
+        function getCacheTtl(status?: string | null) {
+            return status === "RELEASING" ? RELEASING_TTL_MS : DEFAULT_TTL_MS
+        }
+
         function getCachedCounts(mediaId: string): { sub: number; dub: number } | null {
             try {
-                return $storage.get<{ sub: number; dub: number }>(CACHE_PREFIX + mediaId) || null
+                const raw = $storage.get<any>(CACHE_PREFIX + mediaId)
+                if (!raw) return null
+
+                // Backward compatibility with earlier plain count objects.
+                if (typeof raw.sub === "number" || typeof raw.dub === "number") {
+                    if (typeof raw.expiresAt === "number" && raw.expiresAt < getNow()) return null
+                    return {
+                        sub: typeof raw.sub === "number" ? raw.sub : 0,
+                        dub: typeof raw.dub === "number" ? raw.dub : 0,
+                    }
+                }
+
+                return null
             } catch {
                 return null
             }
         }
 
-        function setCachedCounts(mediaId: string, counts: { sub: number; dub: number } | null) {
+        function setCachedCounts(mediaId: string, counts: { sub: number; dub: number } | null, status?: string | null) {
             try {
-                $storage.set(CACHE_PREFIX + mediaId, counts)
+                $storage.set(CACHE_PREFIX + mediaId, counts == null ? {
+                    sub: 0,
+                    dub: 0,
+                    status: status || null,
+                    expiresAt: getNow() + getCacheTtl(status || null),
+                } : {
+                    sub: counts.sub,
+                    dub: counts.dub,
+                    status: status || null,
+                    expiresAt: getNow() + getCacheTtl(status || null),
+                })
             } catch { }
         }
 
@@ -176,11 +208,12 @@ function init() {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        query: "query($id:Int){Media(id:$id){title{english romaji native}}}",
+                        query: "query($id:Int){Media(id:$id){status title{english romaji native}}}",
                         variables: { id: parseInt(mediaId, 10) },
                     }),
                 })
                 const aniData = await aniRes.json()
+                const mediaStatus = aniData?.data?.Media?.status || null
                 const titles = [
                     aniData?.data?.Media?.title?.english,
                     aniData?.data?.Media?.title?.romaji,
@@ -190,7 +223,7 @@ function init() {
                 const title = titles[0] || ""
                 if (!title) {
                     countsByMediaId.set(mediaId, null)
-                    setCachedCounts(mediaId, null)
+                    setCachedCounts(mediaId, null, mediaStatus)
                     return null
                 }
 
@@ -199,7 +232,7 @@ function init() {
                     detailState.set("API search failed: " + searchRes.status)
                     tray.update()
                     countsByMediaId.set(mediaId, null)
-                    setCachedCounts(mediaId, null)
+                    setCachedCounts(mediaId, null, mediaStatus)
                     return null
                 }
 
@@ -207,7 +240,7 @@ function init() {
                 const animes = searchData?.data?.animes || []
                 if (!animes.length) {
                     countsByMediaId.set(mediaId, null)
-                    setCachedCounts(mediaId, null)
+                    setCachedCounts(mediaId, null, mediaStatus)
                     return null
                 }
 
@@ -219,7 +252,7 @@ function init() {
                 const eps = match?.episodes
                 if (!eps) {
                     countsByMediaId.set(mediaId, null)
-                    setCachedCounts(mediaId, null)
+                    setCachedCounts(mediaId, null, mediaStatus)
                     return null
                 }
 
@@ -228,7 +261,7 @@ function init() {
                     dub: typeof eps.dub === "number" ? eps.dub : 0,
                 }
                 countsByMediaId.set(mediaId, result)
-                setCachedCounts(mediaId, result)
+                setCachedCounts(mediaId, result, mediaStatus)
                 detailState.set((match?.name || title) + " → CC " + result.sub + " / DUB " + result.dub)
                 tray.update()
                 return result
