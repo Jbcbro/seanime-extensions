@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const dataPath = path.resolve(__dirname, "../data/counts.json")
+const seedsPath = path.resolve(__dirname, "../data/seed-ids.json")
 
 const ANILIST_URL = "https://graphql.anilist.co"
 const HIANIME_SEARCH_URL = "https://aniwatch-api.jc-server.com/api/v2/hianime/search?q="
@@ -36,16 +37,30 @@ function normalizeTitle(value) {
     return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
 }
 
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function postJson(url, body) {
-    const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    })
-    if (!response.ok) {
-        throw new Error(`Request failed: ${response.status} ${response.statusText}`)
+    let lastError
+    for (let attempt = 0; attempt < 4; attempt++) {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        })
+        if (response.ok) {
+            return response.json()
+        }
+
+        lastError = new Error(`Request failed: ${response.status} ${response.statusText}`)
+        if (response.status === 429 && attempt < 3) {
+            await sleep(1500 * (attempt + 1))
+            continue
+        }
+        throw lastError
     }
-    return response.json()
+    throw lastError
 }
 
 async function fetchCandidates() {
@@ -75,13 +90,20 @@ async function fetchCandidates() {
         }
     `
 
-    const requests = [
-        { page: 1, perPage: 50, season: currentSeason, seasonYear: CURRENT_YEAR, sort: ["POPULARITY_DESC"] },
-        { page: 1, perPage: 50, season: previousSeason.season, seasonYear: previousSeason.year, sort: ["POPULARITY_DESC"] },
-        { page: 1, perPage: 50, status: "RELEASING", sort: ["POPULARITY_DESC"] },
-        { page: 1, perPage: 50, status: "RELEASING", sort: ["TRENDING_DESC"] },
-        { page: 1, perPage: 50, sort: ["TRENDING_DESC"] },
-    ]
+    const requests = []
+
+    for (const page of [1, 2, 3]) {
+        requests.push({ page, perPage: 50, season: currentSeason, seasonYear: CURRENT_YEAR, sort: ["POPULARITY_DESC"] })
+        requests.push({ page, perPage: 50, season: previousSeason.season, seasonYear: previousSeason.year, sort: ["POPULARITY_DESC"] })
+        requests.push({ page, perPage: 50, status: "RELEASING", sort: ["POPULARITY_DESC"] })
+    }
+
+    requests.push({ page: 1, perPage: 50, status: "RELEASING", sort: ["TRENDING_DESC"] })
+    requests.push({ page: 2, perPage: 50, status: "RELEASING", sort: ["TRENDING_DESC"] })
+    requests.push({ page: 1, perPage: 50, sort: ["TRENDING_DESC"] })
+    requests.push({ page: 2, perPage: 50, sort: ["TRENDING_DESC"] })
+    requests.push({ page: 1, perPage: 50, sort: ["POPULARITY_DESC"] })
+    requests.push({ page: 2, perPage: 50, sort: ["POPULARITY_DESC"] })
 
     const seen = new Map()
     for (const variables of requests) {
@@ -93,15 +115,51 @@ async function fetchCandidates() {
         }
     }
 
-    return [...seen.values()].slice(0, 180)
+    try {
+        const seedIds = JSON.parse(await fs.readFile(seedsPath, "utf8"))
+        for (const id of Array.isArray(seedIds) ? seedIds : []) {
+            if (!id || seen.has(String(id))) continue
+            seen.set(String(id), {
+                id: Number(id),
+                status: null,
+                title: {},
+            })
+        }
+    } catch { }
+
+    return [...seen.values()]
 }
 
 async function fetchCountsForMedia(media) {
-    const titles = [
-        media?.title?.english,
-        media?.title?.romaji,
-        media?.title?.native,
+    let titleSource = media
+    let titles = [
+        titleSource?.title?.english,
+        titleSource?.title?.romaji,
+        titleSource?.title?.native,
     ].filter(Boolean)
+
+    if (!titles.length && media?.id) {
+        const query = `
+            query SeedMedia($id: Int!) {
+                Media(id: $id, type: ANIME) {
+                    id
+                    status
+                    title {
+                        english
+                        romaji
+                        native
+                    }
+                }
+            }
+        `
+        const json = await postJson(ANILIST_URL, { query, variables: { id: Number(media.id) } })
+        titleSource = json?.data?.Media || media
+        titles = [
+            titleSource?.title?.english,
+            titleSource?.title?.romaji,
+            titleSource?.title?.native,
+        ].filter(Boolean)
+    }
 
     if (!titles.length) return null
 
@@ -123,7 +181,7 @@ async function fetchCountsForMedia(media) {
 
     return {
         title: match?.name || primaryTitle,
-        status: media?.status || null,
+        status: titleSource?.status || media?.status || null,
         sub: typeof eps.sub === "number" ? eps.sub : 0,
         dub: typeof eps.dub === "number" ? eps.dub : 0,
     }
@@ -132,7 +190,7 @@ async function fetchCountsForMedia(media) {
 async function main() {
     const candidates = await fetchCandidates()
     const entries = {}
-    const concurrency = 8
+    const concurrency = 12
     let index = 0
 
     async function worker() {
@@ -160,6 +218,7 @@ async function main() {
             currentYear: CURRENT_YEAR,
             previousSeason: previousSeason.season,
             previousSeasonYear: previousSeason.year,
+            seedIdsPath: "extensions/dub-tracker/data/seed-ids.json",
             candidateCount: candidates.length,
             entryCount: Object.keys(entries).length,
         },

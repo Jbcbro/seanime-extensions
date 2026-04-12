@@ -1,11 +1,11 @@
 {
     "id": "jbcbro-dub-tracker",
     "name": "Dub Tracker",
-    "version": "4.0.0",
+    "version": "4.1.0",
     "manifestURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/dub-tracker/manifest.json",
     "language": "typescript",
     "type": "plugin",
-    "description": "Shows CC and DUB episode counts on anime thumbnails from a prebuilt AniList-ID dataset.",
+    "description": "Shows CC and DUB episode counts on anime thumbnails from a prebuilt AniList-ID dataset with live fallback for misses.",
     "author": "Jbcbro",
     "icon": "https://raw.githubusercontent.com/Bas1874/MyDubList-Seanime/refs/heads/main/src/icons/logo.png",
     "payloadURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/dub-tracker/plugin.ts",
@@ -18,9 +18,11 @@
             "allow": {
                 "networkAccess": {
                     "allowedDomains": [
-                        "raw.githubusercontent.com"
+                        "raw.githubusercontent.com",
+                        "graphql.anilist.co",
+                        "aniwatch-api.jc-server.com"
                     ],
-                    "reasoning": "Loads the prebuilt Dub Tracker counts dataset from this repository."
+                    "reasoning": "Loads the prebuilt Dub Tracker counts dataset from this repository and falls back to AniList plus AniWatch-compatible lookups for uncovered IDs."
                 },
                 "unsafeFlags": [
                     {
