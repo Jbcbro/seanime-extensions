@@ -261,7 +261,7 @@ function init() {
                 const wrapper = await ctx.dom.createElement("div")
                 await wrapper.setProperty("className", "sdt-wrapper sdt-hide-on-hover")
                 await wrapper.setProperty("style",
-                    "position:absolute;top:6px;right:4px;z-index:10;display:flex;flex-direction:column;gap:2px;pointer-events:none;"
+                    "position:absolute;top:6px;left:4px;z-index:10;display:flex;flex-direction:column;gap:2px;pointer-events:none;"
                 )
                 await wrapper.setProperty("innerHTML",
                     '<span style="display:inline-block;background:#047857;color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;line-height:1.6;">CC: ' + counts.sub + '</span>' +
