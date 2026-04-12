@@ -8,7 +8,7 @@
  */
 function init() {
     $ui.register((ctx) => {
-        let hasSwitchedForCurrentLoad = false
+        let hasTriggeredForCurrentPage = false
 
         function clickDubToggle() {
             ctx.dom.createElement("script").then((script) => {
@@ -53,26 +53,17 @@ function init() {
         }
 
         function trySwitchToDub() {
-            if (hasSwitchedForCurrentLoad) return
-            hasSwitchedForCurrentLoad = true
+            if (hasTriggeredForCurrentPage) return
+            hasTriggeredForCurrentPage = true
             clickDubToggle()
         }
 
         ctx.screen.onNavigate(() => {
-            hasSwitchedForCurrentLoad = false
+            hasTriggeredForCurrentPage = false
             trySwitchToDub()
         })
 
         ctx.screen.loadCurrent()
-
-        ctx.videoCore.addEventListener("video-loaded", () => {
-            hasSwitchedForCurrentLoad = false
-            trySwitchToDub()
-        })
-
-        ctx.videoCore.addEventListener("video-can-play", () => {
-            trySwitchToDub()
-        })
 
         ctx.dom.observe("button", () => {
             trySwitchToDub()
