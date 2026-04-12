@@ -3,7 +3,8 @@
 /**
  * Dub Tracker
  *
- * Places CC / DUB episode-count badges on anime thumbnail cards.
+ * Resolves visible AniList IDs into CC / DUB counts, caches them in memory,
+ * then renders badges from that local map.
  */
 function init() {
     $ui.register(async (ctx) => {
@@ -12,8 +13,13 @@ function init() {
             { label: "Anime DB", value: "https://anime-db.videasy.net" },
         ]
 
-        const SELECTOR = "[data-media-entry-card-body='true'], [data-media-entry-card-hover-popup-banner-container='true']"
-        const CACHE_PREFIX = "dub-counts-v3-"
+        const SELECTOR = [
+            "[data-media-entry-card-body='true']",
+            "[data-media-entry-card-hover-popup-banner-container='true']",
+            "[data-media-id]",
+            "a[href*='?id=']",
+            "a[href*='&id=']",
+        ].join(", ")
 
         const debugRef = ctx.fieldRef("false")
         const apiRef = ctx.fieldRef("https://aniwatch-api.jc-server.com")
@@ -23,10 +29,10 @@ function init() {
         const badgesAdded = ctx.state(0)
         const queueSize = ctx.state(0)
 
-        const fetchQueue: string[] = []
-        const queueElements = new Map<string, any[]>()
-        const inflight = new Set<string>()
+        const countsByMediaId = new Map<string, { sub: number; dub: number } | null>()
+        const unresolvedIds = new Set<string>()
         let fetchInProgress = false
+        let scanInProgress = false
 
         function isDebug() {
             return debugRef.current === "true"
@@ -34,14 +40,6 @@ function init() {
 
         function dbg(msg: string) {
             if (isDebug()) ctx.toast.info("[DubTracker] " + msg)
-        }
-
-        function getCached(id: string): { sub: number; dub: number } | null {
-            try { return $storage.get<{ sub: number; dub: number }>(CACHE_PREFIX + id) || null } catch { return null }
-        }
-
-        function setCached(id: string, data: { sub: number; dub: number }) {
-            try { $storage.set(CACHE_PREFIX + id, data) } catch { }
         }
 
         const tray = ctx.newTray({
@@ -73,14 +71,14 @@ function init() {
             for (const badge of badges) await badge.remove()
             const badged = await ctx.dom.query("[data-sdt-badge='true']")
             for (const el of badged) await el.removeAttribute("data-sdt-badge")
-            fetchQueue.length = 0
-            queueElements.clear()
             cardsFound.set(0)
             badgesAdded.set(0)
             queueSize.set(0)
+            unresolvedIds.clear()
             statusState.set("Rescanning")
-            detailState.set("Cleared badges and queue")
+            detailState.set("Cleared DOM badges")
             tray.update()
+            await scanNow("Rescan")
         })
 
         const injectStyles = async () => {
@@ -144,15 +142,12 @@ function init() {
             return null
         }
 
-        async function fetchEpisodeCounts(mediaId: string): Promise<{ sub: number; dub: number } | null> {
-            const cached = getCached(mediaId)
-            if (cached) return cached
-            if (inflight.has(mediaId)) return null
-            inflight.add(mediaId)
+        function normalizeTitle(value: string): string {
+            return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+        }
 
-            function normalizeTitle(value: string): string {
-                return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
-            }
+        async function resolveCountsForMediaId(mediaId: string): Promise<{ sub: number; dub: number } | null> {
+            if (countsByMediaId.has(mediaId)) return countsByMediaId.get(mediaId) || null
 
             try {
                 const aniRes = await ctx.fetch("https://graphql.anilist.co", {
@@ -169,26 +164,25 @@ function init() {
                     aniData?.data?.Media?.title?.romaji,
                     aniData?.data?.Media?.title?.native,
                 ].filter(Boolean)
+
                 const title = titles[0] || ""
                 if (!title) {
-                    detailState.set("No AniList title for " + mediaId)
-                    tray.update()
+                    countsByMediaId.set(mediaId, null)
                     return null
                 }
 
                 const searchRes = await ctx.fetch(apiRef.current + "/api/v2/hianime/search?q=" + encodeURIComponent(title))
                 if (searchRes.status !== 200) {
-                    dbg("search failed: " + searchRes.status)
                     detailState.set("API search failed: " + searchRes.status)
                     tray.update()
+                    countsByMediaId.set(mediaId, null)
                     return null
                 }
 
                 const searchData = await searchRes.json()
                 const animes = searchData?.data?.animes || []
                 if (!animes.length) {
-                    detailState.set("No search results for " + title)
-                    tray.update()
+                    countsByMediaId.set(mediaId, null)
                     return null
                 }
 
@@ -196,10 +190,10 @@ function init() {
                 const match = animes.find((a: any) => normalizedTitles.includes(normalizeTitle(a?.name || ""))) ||
                     animes.find((a: any) => normalizedTitles.some((t: string) => normalizeTitle(a?.name || "").includes(t) || t.includes(normalizeTitle(a?.name || "")))) ||
                     animes[0]
+
                 const eps = match?.episodes
                 if (!eps) {
-                    detailState.set("No episode data for " + (match?.name || title))
-                    tray.update()
+                    countsByMediaId.set(mediaId, null)
                     return null
                 }
 
@@ -207,18 +201,38 @@ function init() {
                     sub: typeof eps.sub === "number" ? eps.sub : 0,
                     dub: typeof eps.dub === "number" ? eps.dub : 0,
                 }
-                setCached(mediaId, result)
+                countsByMediaId.set(mediaId, result)
                 detailState.set((match?.name || title) + " → CC " + result.sub + " / DUB " + result.dub)
                 tray.update()
                 return result
             } catch (e) {
-                dbg("fetch error: " + e)
-                statusState.set("Fetch error")
-                detailState.set(String(e))
+                dbg("resolve error: " + e)
+                countsByMediaId.set(mediaId, null)
+                detailState.set("Resolve error")
                 tray.update()
                 return null
+            }
+        }
+
+        async function resolveVisibleCounts(ids: string[]) {
+            if (fetchInProgress || ids.length === 0) return
+            fetchInProgress = true
+            statusState.set("Resolving")
+            queueSize.set(ids.length)
+            tray.update()
+
+            try {
+                for (let i = 0; i < ids.length; i++) {
+                    const mediaId = ids[i]
+                    queueSize.set(ids.length - i)
+                    tray.update()
+                    await resolveCountsForMediaId(mediaId)
+                }
             } finally {
-                inflight.delete(mediaId)
+                fetchInProgress = false
+                queueSize.set(0)
+                statusState.set("Running")
+                tray.update()
             }
         }
 
@@ -261,91 +275,89 @@ function init() {
                 tray.update()
             } catch (e) {
                 dbg("badge error: " + e)
-                detailState.set("Badge error: " + String(e))
-                tray.update()
             }
         }
 
-        async function drainOne() {
-            if (fetchInProgress || fetchQueue.length === 0) return
-            const mediaId = fetchQueue.shift()
-            if (!mediaId) return
-            const elements = queueElements.get(mediaId) || []
-            queueElements.delete(mediaId)
-            queueSize.set(fetchQueue.length)
-            if (!elements.length) return
+        async function processElements(elements: any[]) {
+            const idsToResolve: string[] = []
 
-            fetchInProgress = true
-            statusState.set("Fetching")
-            tray.update()
-            try {
-                const counts = await fetchEpisodeCounts(mediaId)
-                if (counts && (counts.sub > 0 || counts.dub > 0)) {
-                    for (const el of elements) await addBadge(el, counts)
-                }
-            } finally {
-                fetchInProgress = false
-                statusState.set("Running")
-                tray.update()
-            }
-        }
+            for (const el of elements) {
+                try {
+                    if (await el.getAttribute("data-sdt-checked") === "true") continue
 
-        function enqueueCard(mediaId: string, el: any) {
-            const existing = queueElements.get(mediaId)
-            if (existing) {
-                existing.push(el)
-                return
-            }
-            fetchQueue.push(mediaId)
-            queueElements.set(mediaId, [el])
-            queueSize.set(fetchQueue.length)
-        }
-
-        async function processCard(el: any) {
-            try {
-                if (await el.getAttribute("data-sdt-checked") === "true") return
-
-                const mediaId = await extractMediaId(el)
-                if (!mediaId) {
-                    const retries = parseInt(await el.getAttribute("data-sdt-retries") || "0", 10)
-                    if (retries >= 10) await el.setAttribute("data-sdt-checked", "true")
-                    else await el.setAttribute("data-sdt-retries", String(retries + 1))
-                    if (retries === 0) {
-                        detailState.set("Could not extract media ID")
-                        tray.update()
+                    const mediaId = await extractMediaId(el)
+                    if (!mediaId) {
+                        const retries = parseInt(await el.getAttribute("data-sdt-retries") || "0", 10)
+                        if (retries >= 10) await el.setAttribute("data-sdt-checked", "true")
+                        else await el.setAttribute("data-sdt-retries", String(retries + 1))
+                        continue
                     }
-                    return
-                }
 
-                await el.setAttribute("data-sdt-checked", "true")
-                cardsFound.set(cardsFound.get() + 1)
+                    await el.setAttribute("data-sdt-checked", "true")
+                    cardsFound.set(cardsFound.get() + 1)
+
+                    if (!countsByMediaId.has(mediaId) && !unresolvedIds.has(mediaId)) {
+                        unresolvedIds.add(mediaId)
+                        idsToResolve.push(mediaId)
+                    }
+                } catch (e) {
+                    dbg("process error: " + e)
+                }
+            }
+
+            tray.update()
+
+            await resolveVisibleCounts(idsToResolve)
+
+            for (const mediaId of idsToResolve) unresolvedIds.delete(mediaId)
+
+            for (const el of elements) {
+                try {
+                    const mediaId = await extractMediaId(el)
+                    if (!mediaId) continue
+                    const counts = countsByMediaId.get(mediaId)
+                    if (counts && (counts.sub > 0 || counts.dub > 0)) {
+                        await addBadge(el, counts)
+                    }
+                } catch (e) {
+                    dbg("render error: " + e)
+                }
+            }
+        }
+
+        async function scanNow(reason: string) {
+            if (scanInProgress) return
+            scanInProgress = true
+
+            try {
+                const unchecked = await ctx.dom.query(
+                    SELECTOR + ":not([data-sdt-checked='true'])",
+                    { identifyChildren: true, withInnerHTML: true }
+                )
+                detailState.set(reason + ": " + unchecked.length + " unchecked")
                 tray.update()
-
-                const cached = getCached(mediaId)
-                if (cached) {
-                    if (cached.sub > 0 || cached.dub > 0) await addBadge(el, cached)
-                    return
-                }
-
-                enqueueCard(mediaId, el)
-            } catch (e) {
-                dbg("process error: " + e)
+                await processElements(unchecked)
+            } finally {
+                scanInProgress = false
             }
         }
 
         await injectStyles()
 
         ctx.dom.observe(SELECTOR, async (elements) => {
-            for (const el of elements) await processCard(el)
+            detailState.set("Observer: " + elements.length + " elements")
+            tray.update()
+            await processElements(elements)
         }, { identifyChildren: true, withInnerHTML: true })
 
+        ctx.screen.onNavigate(async () => {
+            await scanNow("Navigate")
+        })
+
+        ctx.screen.loadCurrent()
+
         ctx.setInterval(async () => {
-            const unchecked = await ctx.dom.query(
-                SELECTOR + ":not([data-sdt-checked='true'])",
-                { identifyChildren: true, withInnerHTML: true }
-            )
-            for (const el of unchecked) await processCard(el)
-            await drainOne()
+            await scanNow("Interval")
         }, 2000)
 
         statusState.set("Running")
