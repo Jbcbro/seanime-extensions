@@ -20,10 +20,18 @@ function init() {
         function setCached(id: string, data: { sub: number; dub: number }) {
             try { $storage.set(CACHE_PREFIX + id, data) } catch { }
         }
+        function getSetting<T>(key: string, fallback: T): T {
+            try {
+                const value = $storage.get<T>(key)
+                return value == null ? fallback : value
+            } catch {
+                return fallback
+            }
+        }
 
         // ─── Settings ─────────────────────────────────────────────────────
-        const debugRef = ctx.fieldRef($storage.get("sdt-debug") === true ? "true" : "false")
-        const apiBaseRef = ctx.fieldRef(String($storage.get("sdt-api-base") || DEFAULT_API_BASE))
+        const debugRef = ctx.fieldRef(getSetting("sdt-debug", false) === true ? "true" : "false")
+        const apiBaseRef = ctx.fieldRef(String(getSetting("sdt-api-base", DEFAULT_API_BASE)))
 
         function isDebug() { return debugRef.current === "true" }
         function getApiBase() {
