@@ -22,7 +22,6 @@ function init() {
 
         const tray = ctx.newTray({
             tooltipText: "Continuity Sync",
-            iconUrl: "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/continuity-sync/icon.png",
             withContent: true,
         })
 
@@ -46,15 +45,24 @@ function init() {
                 })
                 const mins = Math.floor(currentTime / 60)
                 const secs = Math.floor(currentTime % 60)
-                const timeStr = mins + ":" + (secs < 10 ? "0" : "") + secs
-                lastSavedState.set(timeStr + " (" + reason + ")")
+                lastSavedState.set(mins + ":" + (secs < 10 ? "0" : "") + secs + " (" + reason + ")")
                 tray.update()
             } catch (e) { }
         }
 
+        // ─── Bootstrap: pick up already-playing video on plugin load ──────
+        try {
+            const state = ctx.videoCore.getPlaybackState()
+            if (state && state.mediaId) {
+                mediaId = state.mediaId
+                episodeNumber = state.episodeNumber
+                statusState.set("Watching ep " + episodeNumber)
+                tray.update()
+            }
+        } catch (e) { }
+
         // ─── Event listeners ──────────────────────────────────────────────
 
-        // Fired when a new episode loads — captures mediaId + episodeNumber
         ctx.videoCore.addEventListener("video-playback-state", (e) => {
             mediaId = e.state.mediaId
             episodeNumber = e.state.episodeNumber
@@ -62,44 +70,50 @@ function init() {
             tray.update()
         })
 
-        // Fired when video metadata loads (also carries mediaId)
         ctx.videoCore.addEventListener("video-loaded", (e) => {
             mediaId = e.state.mediaId
             episodeNumber = e.state.episodeNumber
             currentTime = 0
             isPlaying = false
             lastSavedState.set("—")
-            statusState.set("Loaded ep " + episodeNumber)
+            statusState.set("Watching ep " + episodeNumber)
             tray.update()
         })
 
-        // Fired periodically during playback — keeps currentTime/duration fresh
+        // Fires periodically — keeps currentTime/duration fresh and updates tray
         ctx.videoCore.addEventListener("video-status", (e) => {
             currentTime = e.currentTime
             duration = e.duration
+            const wasPlaying = isPlaying
             isPlaying = !e.paused
+            if (isPlaying !== wasPlaying) {
+                statusState.set(isPlaying ? "Playing ep " + episodeNumber : "Paused ep " + episodeNumber)
+                tray.update()
+            }
         })
 
-        // Save immediately when paused
         ctx.videoCore.addEventListener("video-paused", (e) => {
             currentTime = e.currentTime
             duration = e.duration
             isPlaying = false
+            statusState.set("Paused ep " + episodeNumber)
+            tray.update()
             save("paused")
         })
 
-        // Save on resume
         ctx.videoCore.addEventListener("video-resumed", (e) => {
             currentTime = e.currentTime
             duration = e.duration
             isPlaying = true
+            statusState.set("Playing ep " + episodeNumber)
+            tray.update()
         })
 
-        // Save final position when episode ends or player closes
         ctx.videoCore.addEventListener("video-ended", (_e) => {
             isPlaying = false
             save("ended")
             statusState.set("Idle")
+            mediaId = null
             tray.update()
         })
 
@@ -113,10 +127,9 @@ function init() {
 
         // ─── Periodic save every 10 seconds while playing ─────────────────
         ctx.setInterval(() => {
-            if (isPlaying) save("auto")
+            if (isPlaying && mediaId) save("auto")
         }, 10000)
 
-        statusState.set("Idle")
         tray.update()
     })
 }
