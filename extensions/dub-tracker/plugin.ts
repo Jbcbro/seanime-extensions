@@ -12,7 +12,7 @@ function init() {
 
         // ─── Storage helpers ──────────────────────────────────────────────
         const CACHE_PREFIX = "dub-counts-v2-"
-        const ANIWATCH_BASE = "https://aniwatch-api.jc-server.com"
+        const DEFAULT_API_BASE = "https://aniwatch-api.jc-server.com"
 
         function getCached(id: string): { sub: number; dub: number } | null {
             try { return $storage.get<{ sub: number; dub: number }>(CACHE_PREFIX + id) || null } catch { return null }
@@ -23,8 +23,12 @@ function init() {
 
         // ─── Settings ─────────────────────────────────────────────────────
         const debugRef = ctx.fieldRef($storage.get("sdt-debug") === true ? "true" : "false")
+        const apiBaseRef = ctx.fieldRef(String($storage.get("sdt-api-base") || DEFAULT_API_BASE))
 
         function isDebug() { return debugRef.current === "true" }
+        function getApiBase() {
+            return String(apiBaseRef.current || DEFAULT_API_BASE).trim().replace(/\/+$/, "")
+        }
         function dbg(msg: string) {
             if (isDebug()) ctx.toast.info("[DubTracker] " + msg)
         }
@@ -45,17 +49,19 @@ function init() {
             tray.text("Dub Tracker", { style: { fontWeight: "bold", fontSize: "1rem" } }),
             tray.text("Status: " + statusState.get(), { style: { fontSize: "0.8rem", color: "#aaa" } }),
             tray.text("Cards: " + cardsFound.get() + " | Badges: " + badgesAdded.get() + " | Queue: " + queueSize.get(), { style: { fontSize: "0.8rem", color: "#aaa" } }),
+            tray.input("API Base URL", { fieldRef: apiBaseRef, placeholder: DEFAULT_API_BASE }),
             tray.select("Debug Mode", {
                 options: [{ label: "Off", value: "false" }, { label: "On", value: "true" }],
                 fieldRef: debugRef,
             }),
-            tray.button("Save Debug Setting", { onClick: "save-debug", style: { width: "100%" } }),
+            tray.button("Save Settings", { onClick: "save-debug", style: { width: "100%" } }),
             tray.button("Clear Cache & Rescan", { onClick: "clear-cache", intent: "warning", style: { width: "100%" } }),
         ], { gap: 6, style: { width: "240px", padding: "10px" } }))
 
         ctx.registerEventHandler("save-debug", () => {
             $storage.set("sdt-debug", debugRef.current === "true")
-            ctx.toast.info("Debug mode " + (isDebug() ? "ON" : "OFF"))
+            $storage.set("sdt-api-base", getApiBase())
+            ctx.toast.info("Settings saved")
         })
 
         ctx.registerEventHandler("clear-cache", async () => {
@@ -223,9 +229,14 @@ function init() {
                 dbg("Title: " + title)
 
                 // 2. Search aniwatch-api — returns {sub, dub} directly, no scraping
+                const apiBase = getApiBase()
                 const searchRes = await ctx.fetch(
-                    ANIWATCH_BASE + "/api/v2/hianime/search?q=" + encodeURIComponent(title),
+                    apiBase + "/api/v2/hianime/search?q=" + encodeURIComponent(title),
                 )
+                if (searchRes.status !== 200) {
+                    dbg("Search failed (" + searchRes.status + ") via " + apiBase)
+                    return null
+                }
                 const searchData = await searchRes.json()
                 const animes: any[] = searchData?.data?.animes || []
 
