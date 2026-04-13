@@ -1,7 +1,7 @@
 /// <reference path="./plugin.d.ts" />
 
 /**
- * Continuity Sync v1.0.7
+ * Continuity Sync v1.0.8
  *
  * Root cause: on mobile Safari, getPlaybackStatus() returns stale data
  * (paused=true, currentTime=3) from the moment the video was loaded —
@@ -24,7 +24,9 @@ function init() {
         let clockStartCt:     number        = 0   // video seconds at clock reset
         let isPlaying:        boolean       = false
         let lastSaveMs:       number        = 0
+        let bufferFirstSeen: number        = 0   // Date.now() when spinner first detected
         const SAVE_INTERVAL_MS = 10000
+        const BUFFER_HIDE_MS   = 5000            // hide spinner after 5s if stuck
 
         // ─── Tray ─────────────────────────────────────────────────────────
         const statusLine = ctx.state("Polling...")
@@ -182,6 +184,7 @@ function init() {
                 if (now - lastSaveMs >= SAVE_INTERVAL_MS && trackedDuration > 0 && ct > 0) {
                     save(trackedMediaId, trackedEpisode, ct, trackedDuration, "auto")
                 }
+
             } catch (e) {
                 statusLine.set("poll err: " + e)
                 tray.update()
@@ -260,6 +263,23 @@ function init() {
             statusLine.set("Idle")
             tray.update()
         })
+
+        // ─── Auto-hide stuck buffering spinner on mobile Safari ──────────
+        ctx.setInterval(async () => {
+            try {
+                const el = await ctx.dom.queryOne("[data-vc-element='buffering-indicator']")
+                if (el) {
+                    if (bufferFirstSeen === 0) {
+                        bufferFirstSeen = Date.now()
+                    } else if (Date.now() - bufferFirstSeen >= BUFFER_HIDE_MS) {
+                        await el.setStyle("display", "none")
+                        bufferFirstSeen = 0
+                    }
+                } else {
+                    bufferFirstSeen = 0
+                }
+            } catch (_) {}
+        }, 3000)
 
         tray.update()
     })
