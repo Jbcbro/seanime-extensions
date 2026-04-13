@@ -14,9 +14,14 @@ function init() {
                 const parent = await img.getParent()
                 if (!parent) return
                 if (await parent.getAttribute("data-jc-logo")) return
-                await parent.setProperty("innerHTML",
-                    '<span style="font-size:1.5rem;font-weight:800;letter-spacing:0.05em;color:#fff;">JC</span>'
+
+                const span = await ctx.dom.createElement("span")
+                await span.setInnerHTML("JC")
+                await span.setProperty("style",
+                    "font-size:1.5rem;font-weight:800;letter-spacing:0.05em;color:#fff;"
                 )
+                await img.remove()
+                await parent.append(span)
                 await parent.setAttribute("data-jc-logo", "true")
             } catch (_) {}
         }
@@ -30,5 +35,7 @@ function init() {
         ctx.screen.onNavigate(async () => {
             await replaceLogo()
         })
+
+        ctx.screen.loadCurrent()
     })
 }

@@ -1,15 +1,23 @@
 {
     "id": "jbcbro-custom-logo",
     "name": "Custom Logo",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "manifestURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/custom-logo/manifest.json",
     "language": "typescript",
     "type": "plugin",
     "description": "Replaces the Seanime sidebar logo with JC text.",
     "author": "Jbcbro",
-    "payload": "/// <reference path=\"./plugin.d.ts\" />\n\n/**\n * Custom Logo\n *\n * Replaces the Seanime sidebar logo with \"JC\" text.\n */\nfunction init() {\n    $ui.register(async (ctx) => {\n        async function replaceLogo() {\n            try {\n                const img = await ctx.dom.queryOne(\"img[src='/seanime-logo.png']\")\n                if (!img) return\n                const parent = await img.getParent()\n                if (!parent) return\n                if (await parent.getAttribute(\"data-jc-logo\")) return\n                await parent.setProperty(\"innerHTML\",\n                    '<span style=\"font-size:1.5rem;font-weight:800;letter-spacing:0.05em;color:#fff;\">JC</span>'\n                )\n                await parent.setAttribute(\"data-jc-logo\", \"true\")\n            } catch (_) {}\n        }\n\n        await replaceLogo()\n\n        ctx.dom.observe(\"img[src='/seanime-logo.png']\", async () => {\n            await replaceLogo()\n        })\n\n        ctx.screen.onNavigate(async () => {\n            await replaceLogo()\n        })\n    })\n}\n",
+    "payload": "/// <reference path=\"./plugin.d.ts\" />\n\n/**\n * Custom Logo\n *\n * Replaces the Seanime sidebar logo with \"JC\" text.\n */\nfunction init() {\n    $ui.register(async (ctx) => {\n        async function replaceLogo() {\n            try {\n                const img = await ctx.dom.queryOne(\"img[src='/seanime-logo.png']\")\n                if (!img) return\n                const parent = await img.getParent()\n                if (!parent) return\n                if (await parent.getAttribute(\"data-jc-logo\")) return\n\n                const span = await ctx.dom.createElement(\"span\")\n                await span.setInnerHTML(\"JC\")\n                await span.setProperty(\"style\",\n                    \"font-size:1.5rem;font-weight:800;letter-spacing:0.05em;color:#fff;\"\n                )\n                await img.remove()\n                await parent.append(span)\n                await parent.setAttribute(\"data-jc-logo\", \"true\")\n            } catch (_) {}\n        }\n\n        await replaceLogo()\n\n        ctx.dom.observe(\"img[src='/seanime-logo.png']\", async () => {\n            await replaceLogo()\n        })\n\n        ctx.screen.onNavigate(async () => {\n            await replaceLogo()\n        })\n\n        ctx.screen.loadCurrent()\n    })\n}\n",
     "plugin": {
         "version": "1",
-        "permissions": {}
+        "permissions": {
+            "allow": {
+                "unsafeFlags": [
+                    {
+                        "flag": "dom-script-manipulation"
+                    }
+                ]
+            }
+        }
     }
 }
