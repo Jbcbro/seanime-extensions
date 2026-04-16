@@ -1,7 +1,7 @@
 /// <reference path="./plugin.d.ts" />
 
 /**
- * Continuity Sync v1.2.0
+ * Continuity Sync v1.3.0
  *
  * Root cause 1: on mobile Safari, getPlaybackStatus() returns stale data
  * (paused=true, currentTime=3) from the moment the video was loaded —
@@ -12,17 +12,20 @@
  * writes permanently until Seanime restarts. The wall-clock approach here is
  * immune to that — it never reads video.duration for time tracking.
  *
- * Root cause 3: if the user clicks dub/sub before the continuity seek runs,
- * savePreviousStateThen() saves currentTime=0. This sets initialState={currentTime:0}
- * on the new stream, which blocks both the position restore and the continuity
+ * Root cause 3: if the user clicks dub/sub/provider/server before the
+ * continuity seek runs, savePreviousStateThen() saves currentTime=0 because
+ * HLS already reset the position. This sets initialState={currentTime:0} on
+ * the new stream, which blocks both the position restore and the continuity
  * restore in handleCanPlay, so playback starts from the beginning.
  *
- * Fix for 3: after video-loaded, watch for a video-seeked event. If the first
- * 3s poll tick arrives with no seek, the built-in restore was skipped — fetch
- * the continuity item directly and seek there.
+ * Root cause 3 fix: on every video-loaded, snapshot the wall-clock estimate
+ * into lastGoodPosition before resetting the clock. The 3s poll then uses
+ * that snapshot as the primary restore source (more current than the
+ * continuity API). Falls back to the continuity API if no snapshot exists.
  *
  * v1.1.0: detect playbackType so onlinestream saves use kind="onlinestream".
- * v1.2.0: dub/sub race condition restore fallback.
+ * v1.2.0: restore fallback — no video-seeked after load = built-in skipped.
+ * v1.3.0: lastGoodPosition snapshot fixes rapid provider/server switches.
  */
 function init() {
     $ui.register((ctx) => {
@@ -37,12 +40,15 @@ function init() {
         let isPlaying:         boolean       = false
         let lastSaveMs:        number        = 0
         let bufferFirstSeen:   number        = 0
-        // Restore-race detection: set on video-loaded, cleared after first poll tick
+        // Snapshot of wall-clock position taken just before each stream switch.
+        // Survives resetClock(0) so rapid provider/server changes don't lose it.
+        let lastGoodPosition:  number        = 0
+        // Restore-race detection
         let pendingRestoreCheck: boolean     = false
         let seekedAfterLoad:     boolean     = false
         const SAVE_INTERVAL_MS   = 10000
         const BUFFER_HIDE_MS     = 5000
-        const RESTORE_THRESHOLD  = 5         // seconds — below this we consider position "at start"
+        const RESTORE_THRESHOLD  = 5
 
         // ─── Tray ─────────────────────────────────────────────────────────
         const statusLine = ctx.state("Polling...")
@@ -141,33 +147,47 @@ function init() {
             }
         }
 
-        // ─── Restore-race fallback ─────────────────────────────────────────
-        // Called on the first poll tick after video-loaded when no video-seeked
-        // arrived, meaning the built-in continuity restore was skipped.
+        // ─── Restore fallback ──────────────────────────────────────────────
+        // Called when no video-seeked arrived after video-loaded, meaning the
+        // built-in continuity restore was skipped (initialState.currentTime was 0).
+        //
+        // Priority:
+        //  1. lastGoodPosition — wall-clock snapshot from just before the switch,
+        //     most current and survives multiple rapid stream changes.
+        //  2. ctx.continuity.getWatchHistoryItem — last server-persisted position,
+        //     used when no snapshot exists (first load of a new session).
         function attemptRestoreFallback(mediaId: number, episode: number) {
-            try {
-                const history = ctx.continuity.getWatchHistoryItem(mediaId)
-                const item    = pick(history, "item", "Item")
-                if (!item) return
+            let restorePos = 0
 
-                const savedCt  = parseFloat(String(pick(item, "currentTime", "CurrentTime") || 0))
-                const savedDur = parseFloat(String(pick(item, "duration",    "Duration")    || 0))
-                const savedEp  = parseInt(String(pick(item, "episodeNumber", "EpisodeNumber") || 0), 10)
-
-                if (savedEp !== episode)              return   // different episode
-                if (savedCt  <= RESTORE_THRESHOLD)    return   // nothing meaningful saved
-                if (savedDur <= 0)                    return   // no duration
-                if (savedCt / savedDur > 0.9)         return   // episode basically finished
-
-                ctx.videoCore.seekTo(savedCt)
-                resetClock(savedCt)
-                statusLine.set("Restored ep" + episode + " @ " + fmtTime(savedCt))
-                debugLine.set("dub-race restore ct=" + Math.floor(savedCt))
-                tray.update()
-            } catch (err) {
-                debugLine.set("restore err: " + err)
-                tray.update()
+            // 1. Use our own snapshot if available
+            if (lastGoodPosition > RESTORE_THRESHOLD) {
+                restorePos = lastGoodPosition
             }
+
+            // 2. Fall back to continuity API
+            if (restorePos <= RESTORE_THRESHOLD) {
+                try {
+                    const history = ctx.continuity.getWatchHistoryItem(mediaId)
+                    const item    = pick(history, "item", "Item")
+                    if (item) {
+                        const savedCt  = parseFloat(String(pick(item, "currentTime", "CurrentTime") || 0))
+                        const savedDur = parseFloat(String(pick(item, "duration",    "Duration")    || 0))
+                        const savedEp  = parseInt(String(pick(item, "episodeNumber", "EpisodeNumber") || 0), 10)
+                        if (savedEp === episode && savedCt > RESTORE_THRESHOLD && savedDur > 0 && savedCt / savedDur < 0.9) {
+                            restorePos = savedCt
+                        }
+                    }
+                } catch (_) {}
+            }
+
+            if (restorePos <= RESTORE_THRESHOLD) return
+
+            ctx.videoCore.seekTo(restorePos)
+            resetClock(restorePos)
+            lastGoodPosition = 0
+            statusLine.set("Restored ep" + episode + " @ " + fmtTime(restorePos))
+            debugLine.set("restore ct=" + Math.floor(restorePos))
+            tray.update()
         }
 
         // ─── Primary poll: every 3s ────────────────────────────────────────
@@ -183,6 +203,7 @@ function init() {
                         isPlaying = false
                     }
                     pendingRestoreCheck = false
+                    lastGoodPosition    = 0
                     statusLine.set("Idle")
                     debugLine.set("no state")
                     tray.update()
@@ -222,8 +243,9 @@ function init() {
                 if (pendingRestoreCheck) {
                     pendingRestoreCheck = false
                     if (!seekedAfterLoad) {
-                        // No seek arrived — built-in restore was skipped
                         attemptRestoreFallback(mediaId, episode)
+                    } else {
+                        lastGoodPosition = 0
                     }
                 }
 
@@ -266,11 +288,23 @@ function init() {
             const episode = extractEpisode(state)
             const kind    = extractKind(state)
             if (mediaId) {
-                trackedMediaId       = mediaId
-                trackedEpisode       = episode
-                trackedKind          = kind
-                pendingRestoreCheck  = true
-                seekedAfterLoad      = false
+                // Snapshot current position before resetting — this is the last
+                // reliable position across any number of rapid stream switches.
+                // Only keep it if same episode; a new episode starts fresh.
+                const estimated = currentEstimate()
+                if (trackedEpisode === episode && estimated > RESTORE_THRESHOLD) {
+                    lastGoodPosition = estimated
+                } else if (trackedEpisode !== episode) {
+                    lastGoodPosition = 0
+                }
+                // If estimated <= RESTORE_THRESHOLD, keep lastGoodPosition as-is
+                // (a previous switch may have already saved a good value)
+
+                trackedMediaId      = mediaId
+                trackedEpisode      = episode
+                trackedKind         = kind
+                pendingRestoreCheck = true
+                seekedAfterLoad     = false
                 resetClock(0)
                 statusLine.set("Loaded ep" + episode + " [" + kind + "] (id " + mediaId + ")")
                 tray.update()
@@ -300,7 +334,6 @@ function init() {
         ctx.videoCore.addEventListener("video-seeked", (e: any) => {
             const ct = parseFloat(String(pick(e, "currentTime", "CurrentTime") || 0))
             if (ct >= 0) resetClock(ct)
-            // Mark that a seek happened after this load — built-in restore ran
             if (pendingRestoreCheck) seekedAfterLoad = true
         })
 
@@ -310,6 +343,7 @@ function init() {
             }
             trackedMediaId      = null
             pendingRestoreCheck = false
+            lastGoodPosition    = 0
             isPlaying           = false
             statusLine.set("Idle")
             tray.update()
@@ -321,6 +355,7 @@ function init() {
             }
             trackedMediaId      = null
             pendingRestoreCheck = false
+            lastGoodPosition    = 0
             isPlaying           = false
             statusLine.set("Idle")
             tray.update()
