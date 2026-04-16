@@ -26,6 +26,8 @@
  * v1.1.0: detect playbackType so onlinestream saves use kind="onlinestream".
  * v1.2.0: restore fallback — no video-seeked after load = built-in skipped.
  * v1.3.0: lastGoodPosition snapshot fixes rapid provider/server switches.
+ * v1.3.1: fix video-terminated clearing lastGoodPosition before video-loaded
+ *         can read it — save the estimate instead of zeroing it out.
  */
 function init() {
     $ui.register((ctx) => {
@@ -339,11 +341,19 @@ function init() {
 
         ctx.videoCore.addEventListener("video-terminated", (_e: any) => {
             if (trackedMediaId) {
-                save(trackedMediaId, trackedEpisode, currentEstimate(), trackedDuration, trackedKind, "closed")
+                const ct = currentEstimate()
+                save(trackedMediaId, trackedEpisode, ct, trackedDuration, trackedKind, "closed")
+                // Preserve position for restore — don't clear lastGoodPosition here.
+                // setUrl(null) fires between every server/provider switch, so
+                // video-terminated fires before video-loaded for the new stream.
+                // If we clear here, the snapshot is gone before video-loaded can use it.
+                if (ct > RESTORE_THRESHOLD) {
+                    lastGoodPosition = ct
+                }
+                // If ct is 0 (already reset), keep whatever lastGoodPosition was.
             }
             trackedMediaId      = null
             pendingRestoreCheck = false
-            lastGoodPosition    = 0
             isPlaying           = false
             statusLine.set("Idle")
             tray.update()
