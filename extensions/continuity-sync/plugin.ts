@@ -1,7 +1,7 @@
 /// <reference path="./plugin.d.ts" />
 
 /**
- * Continuity Sync v1.3.5
+ * Continuity Sync v1.3.6
  *
  * Root cause 1: on mobile Safari, getPlaybackStatus() returns stale data
  * (paused=true, currentTime=3) from the moment the video was loaded —
@@ -46,6 +46,22 @@
  * It survives the null period so the next stable poll tick processes it.
  * The "New video detected" early return just delays the check by one tick.
  *
+ * Root cause 6: when HLS fires a fatal 403 error, Seanime's onFatalError
+ * handler triggers an instantaneous auto-switch to the next server (not a
+ * manual user action). The entire terminated→loaded→can-play cycle completes
+ * in well under 3 seconds, so the poll-based restore never fires in time.
+ * The console log confirmed the built-in continuity API returns
+ * {item: null, found: false} on the replacement stream because our async
+ * save hasn't persisted yet — so the built-in's restoreSeekTime() also
+ * skips the restore and playback starts at 0.
+ *
+ * Root cause 6 fix: move the primary restore attempt into video-can-play
+ * (which fires immediately when the video can buffer), before the 3s poll
+ * ever runs. If pendingRestoreCheck is set, no built-in seek has arrived,
+ * lastGoodPosition is valid, AND the continuity API has no valid saved
+ * position for this episode — seek immediately. The poll is kept as a
+ * safety net for slower edge cases where video-can-play beats the API.
+ *
  * v1.1.0: detect playbackType so onlinestream saves use kind="onlinestream".
  * v1.2.0: restore fallback — no video-seeked after load = built-in skipped.
  * v1.3.0: lastGoodPosition snapshot fixes rapid provider/server switches.
@@ -57,6 +73,8 @@
  *         lastGoodPosition — both gated on streamLoadedSuccessfully now.
  * v1.3.5: fix null-state poll clearing pendingRestoreCheck — the restore
  *         check was lost when state briefly went null during server switches.
+ * v1.3.6: fix 403 auto-switch restore — move primary restore into
+ *         video-can-play so it fires immediately instead of waiting 3s.
  */
 function init() {
     $ui.register((ctx) => {
@@ -363,6 +381,48 @@ function init() {
             // Stream has buffered enough to start — the wall-clock estimate is now
             // meaningful and video-terminated should save/preserve position.
             streamLoadedSuccessfully = true
+
+            // Primary restore attempt: fires immediately when video is ready,
+            // before the 3s poll has a chance to run. This handles rapid
+            // auto-switches (e.g., onFatalError 403) where the poll is too slow.
+            // Only restore if:
+            //  - video-loaded set pendingRestoreCheck (a switch just happened)
+            //  - no built-in seek has arrived yet (seekedAfterLoad=false)
+            //  - we have a known good position (lastGoodPosition > threshold)
+            //  - the continuity API has no valid saved position for this episode
+            //    (if it does, the built-in's restoreSeekTime() will handle it)
+            if (pendingRestoreCheck && !seekedAfterLoad && lastGoodPosition > RESTORE_THRESHOLD && trackedMediaId) {
+                let builtInWillRestore = false
+                try {
+                    const history = ctx.continuity.getWatchHistoryItem(trackedMediaId)
+                    const item    = pick(history, "item", "Item")
+                    if (item) {
+                        const savedCt = parseFloat(String(pick(item, "currentTime", "CurrentTime") || 0))
+                        const savedEp = parseInt(String(pick(item, "episodeNumber", "EpisodeNumber") || 0), 10)
+                        if (savedEp === trackedEpisode && savedCt > RESTORE_THRESHOLD) {
+                            builtInWillRestore = true
+                        }
+                    }
+                } catch (_) {}
+
+                if (!builtInWillRestore) {
+                    // Built-in API has no valid data — restore immediately.
+                    // restoreSeekTime() runs after handleCanPlay, so if we don't
+                    // seek now, playback will start at 0.
+                    const pos = lastGoodPosition
+                    pendingRestoreCheck = false
+                    ctx.videoCore.seekTo(pos)
+                    resetClock(pos)
+                    lastGoodPosition = 0
+                    statusLine.set("Restored ep" + trackedEpisode + " @ " + fmtTime(pos) + " (can-play)")
+                    evPush("R" + Math.floor(pos) + "(lgp@cp)")
+                    evLogLine.set(evLog.join(">"))
+                    tray.update()
+                }
+                // else: built-in has valid data; let restoreSeekTime() fire the
+                // seek — video-seeked will arrive and the poll handles any fallback.
+            }
+
             evPush("C")
             evLogLine.set(evLog.join(">"))
             tray.update()
