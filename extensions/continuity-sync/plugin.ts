@@ -1,7 +1,7 @@
 /// <reference path="./plugin.d.ts" />
 
 /**
- * Continuity Sync v1.3.3
+ * Continuity Sync v1.3.4
  *
  * Root cause 1: on mobile Safari, getPlaybackStatus() returns stale data
  * (paused=true, currentTime=3) from the moment the video was loaded —
@@ -42,6 +42,10 @@
  *         can read it — save the estimate instead of zeroing it out.
  * v1.3.3: fix 403 errors corrupting lastGoodPosition and continuity API —
  *         gate terminated save/snapshot on video-can-play confirmation.
+ * v1.3.4: fix null-state poll path — when rawState is null during a server
+ *         switch (error display), the poll was saving a near-zero position to
+ *         the continuity API and clearing lastGoodPosition. Now gated on
+ *         streamLoadedSuccessfully and no longer clears lastGoodPosition.
  */
 function init() {
     $ui.register((ctx) => {
@@ -218,12 +222,25 @@ function init() {
 
                 if (!rawState) {
                     if (trackedMediaId) {
-                        save(trackedMediaId, trackedEpisode, currentEstimate(), trackedDuration, trackedKind, "state-lost")
-                        trackedMediaId = null
-                        isPlaying = false
+                        // Only save if this stream actually played. A 403/failed stream
+                        // has streamLoadedSuccessfully=false; saving its near-zero
+                        // elapsed time would corrupt the continuity API.
+                        if (streamLoadedSuccessfully) {
+                            const ct = currentEstimate()
+                            save(trackedMediaId, trackedEpisode, ct, trackedDuration, trackedKind, "state-lost")
+                            if (ct > RESTORE_THRESHOLD) lastGoodPosition = ct
+                        }
+                        // else: keep lastGoodPosition as-is — the snapshot from the
+                        // last good stream is still needed for the next video-loaded.
+                        trackedMediaId           = null
+                        isPlaying                = false
+                        streamLoadedSuccessfully = false
                     }
                     pendingRestoreCheck = false
-                    lastGoodPosition    = 0
+                    // Do NOT clear lastGoodPosition here. rawState goes null briefly
+                    // during server switches (error display between terminated and
+                    // the next video-loaded). Clearing it at this point loses the
+                    // snapshot before the new stream can use it.
                     statusLine.set("Idle")
                     debugLine.set("no state")
                     tray.update()
