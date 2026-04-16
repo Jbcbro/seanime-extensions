@@ -1,7 +1,7 @@
 /// <reference path="./plugin.d.ts" />
 
 /**
- * Continuity Sync v1.3.0
+ * Continuity Sync v1.3.3
  *
  * Root cause 1: on mobile Safari, getPlaybackStatus() returns stale data
  * (paused=true, currentTime=3) from the moment the video was loaded —
@@ -23,11 +23,25 @@
  * that snapshot as the primary restore source (more current than the
  * continuity API). Falls back to the continuity API if no snapshot exists.
  *
+ * Root cause 4: when a server returns 403, video-terminated fires while the
+ * wall-clock estimate is meaningless (counting up from 0 since the failed
+ * stream loaded). If the error took >5s, it overwrites lastGoodPosition with
+ * wrong data and corrupts the continuity API save. The same happens when no
+ * video-terminated fires and video-loaded for the working server sees
+ * currentEstimate() measured from the failed stream's resetClock(0).
+ *
+ * Root cause 4 fix: track streamLoadedSuccessfully via video-can-play. Only
+ * update lastGoodPosition and write to the continuity API in video-terminated
+ * if the stream actually loaded. video-loaded also gates its snapshot on this
+ * flag (which reflects the PREVIOUS stream's state at that point).
+ *
  * v1.1.0: detect playbackType so onlinestream saves use kind="onlinestream".
  * v1.2.0: restore fallback — no video-seeked after load = built-in skipped.
  * v1.3.0: lastGoodPosition snapshot fixes rapid provider/server switches.
  * v1.3.1: fix video-terminated clearing lastGoodPosition before video-loaded
  *         can read it — save the estimate instead of zeroing it out.
+ * v1.3.3: fix 403 errors corrupting lastGoodPosition and continuity API —
+ *         gate terminated save/snapshot on video-can-play confirmation.
  */
 function init() {
     $ui.register((ctx) => {
@@ -45,6 +59,10 @@ function init() {
         // Snapshot of wall-clock position taken just before each stream switch.
         // Survives resetClock(0) so rapid provider/server changes don't lose it.
         let lastGoodPosition:  number        = 0
+        // True once video-can-play fires for the current stream. Guards against
+        // 403/network errors that never buffer any content — in that case the
+        // wall-clock estimate is meaningless and must not overwrite lastGoodPosition.
+        let streamLoadedSuccessfully: boolean = false
         // Restore-race detection
         let pendingRestoreCheck: boolean     = false
         let seekedAfterLoad:     boolean     = false
@@ -284,24 +302,33 @@ function init() {
             }
         })
 
+        ctx.videoCore.addEventListener("video-can-play", (_e: any) => {
+            // Stream has buffered enough to start — the wall-clock estimate is now
+            // meaningful and video-terminated should save/preserve position.
+            streamLoadedSuccessfully = true
+        })
+
         ctx.videoCore.addEventListener("video-loaded", (e: any) => {
             const state   = e.state || e.State
             const mediaId = extractMediaId(state)
             const episode = extractEpisode(state)
             const kind    = extractKind(state)
             if (mediaId) {
-                // Snapshot current position before resetting — this is the last
-                // reliable position across any number of rapid stream switches.
-                // Only keep it if same episode; a new episode starts fresh.
+                // Snapshot current position before resetting. streamLoadedSuccessfully
+                // here reflects the PREVIOUS stream — only trust the estimate if that
+                // stream actually played (video-can-play fired). A failed stream (403
+                // etc.) never fires video-can-play so its elapsed wall-clock time is
+                // meaningless and must not overwrite lastGoodPosition.
                 const estimated = currentEstimate()
-                if (trackedEpisode === episode && estimated > RESTORE_THRESHOLD) {
+                if (trackedEpisode === episode && estimated > RESTORE_THRESHOLD && streamLoadedSuccessfully) {
                     lastGoodPosition = estimated
                 } else if (trackedEpisode !== episode) {
                     lastGoodPosition = 0
                 }
-                // If estimated <= RESTORE_THRESHOLD, keep lastGoodPosition as-is
-                // (a previous switch may have already saved a good value)
+                // If estimated <= RESTORE_THRESHOLD or stream didn't load, keep
+                // lastGoodPosition as-is (a previous good switch may have set it).
 
+                streamLoadedSuccessfully = false  // reset for the incoming stream
                 trackedMediaId      = mediaId
                 trackedEpisode      = episode
                 trackedKind         = kind
@@ -340,21 +367,23 @@ function init() {
         })
 
         ctx.videoCore.addEventListener("video-terminated", (_e: any) => {
-            if (trackedMediaId) {
+            if (trackedMediaId && streamLoadedSuccessfully) {
+                // Only save and snapshot if this stream actually loaded content.
+                // A 403/network-error stream never fires video-can-play, so
+                // streamLoadedSuccessfully stays false and we skip both to avoid
+                // corrupting the continuity API and lastGoodPosition with a
+                // meaningless wall-clock estimate.
                 const ct = currentEstimate()
                 save(trackedMediaId, trackedEpisode, ct, trackedDuration, trackedKind, "closed")
-                // Preserve position for restore — don't clear lastGoodPosition here.
-                // setUrl(null) fires between every server/provider switch, so
-                // video-terminated fires before video-loaded for the new stream.
-                // If we clear here, the snapshot is gone before video-loaded can use it.
                 if (ct > RESTORE_THRESHOLD) {
                     lastGoodPosition = ct
                 }
                 // If ct is 0 (already reset), keep whatever lastGoodPosition was.
             }
-            trackedMediaId      = null
-            pendingRestoreCheck = false
-            isPlaying           = false
+            trackedMediaId           = null
+            pendingRestoreCheck      = false
+            isPlaying                = false
+            streamLoadedSuccessfully = false
             statusLine.set("Idle")
             tray.update()
         })
@@ -363,10 +392,11 @@ function init() {
             if (trackedMediaId) {
                 save(trackedMediaId, trackedEpisode, trackedDuration || currentEstimate(), trackedDuration, trackedKind, "ended")
             }
-            trackedMediaId      = null
-            pendingRestoreCheck = false
-            lastGoodPosition    = 0
-            isPlaying           = false
+            trackedMediaId           = null
+            pendingRestoreCheck      = false
+            lastGoodPosition         = 0
+            isPlaying                = false
+            streamLoadedSuccessfully = false
             statusLine.set("Idle")
             tray.update()
         })
