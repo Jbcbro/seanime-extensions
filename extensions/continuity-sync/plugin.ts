@@ -1,29 +1,38 @@
 /// <reference path="./plugin.d.ts" />
 
 /**
- * Continuity Sync v1.0.8
+ * Continuity Sync v1.1.0
  *
  * Root cause: on mobile Safari, getPlaybackStatus() returns stale data
  * (paused=true, currentTime=3) from the moment the video was loaded —
  * video-status WebSocket events never arrive from the browser to update it.
  *
+ * Also fixes: after an onlinestream server/quality switch, video.duration
+ * becomes NaN during HLS re-initialization, breaking the built-in continuity
+ * writes permanently until Seanime restarts. The wall-clock approach here is
+ * immune to that — it never reads video.duration for time tracking.
+ *
  * Fix: ignore paused/currentTime from getPlaybackStatus().
  * Instead, use a local wall-clock to estimate currentTime.
  * When real events (video-paused, video-status) do arrive, use them
  * to correct the estimate.
+ *
+ * v1.1.0: detect playbackType so onlinestream saves use kind="onlinestream"
+ * instead of kind="mediastream", ensuring the backend stores and retrieves
+ * the history item under the correct key.
  */
 function init() {
     $ui.register((ctx) => {
 
         // ─── Runtime state ────────────────────────────────────────────────
-        let trackedMediaId:   number | null = null
-        let trackedEpisode:   number        = 0
-        let trackedDuration:  number        = 0
-        let estimatedCt:      number        = 0   // seconds
-        let clockStartWall:   number        = 0   // Date.now() when clock reset
-        let clockStartCt:     number        = 0   // video seconds at clock reset
-        let isPlaying:        boolean       = false
-        let lastSaveMs:       number        = 0
+        let trackedMediaId:  number | null = null
+        let trackedEpisode:  number        = 0
+        let trackedDuration: number        = 0
+        let trackedKind:     string        = "mediastream"
+        let clockStartWall:  number        = 0   // Date.now() when clock reset
+        let clockStartCt:    number        = 0   // video seconds at clock reset
+        let isPlaying:       boolean       = false
+        let lastSaveMs:      number        = 0
         let bufferFirstSeen: number        = 0   // Date.now() when spinner first detected
         const SAVE_INTERVAL_MS = 10000
         const BUFFER_HIDE_MS   = 5000            // hide spinner after 5s if stuck
@@ -80,6 +89,17 @@ function init() {
             return v ? parseInt(String(v), 10) : 0
         }
 
+        /**
+         * Map playbackInfo.playbackType to a continuity kind string.
+         * "onlinestream" → "onlinestream", anything else → "mediastream".
+         */
+        function extractKind(state: any): string {
+            if (!state) return "mediastream"
+            const pi = pick(state, "playbackInfo", "PlaybackInfo")
+            const pt = pick(pi, "playbackType", "PlaybackType")
+            return String(pt) === "onlinestream" ? "onlinestream" : "mediastream"
+        }
+
         /** Start / reset the local clock at a known video position */
         function resetClock(videoSeconds: number) {
             clockStartWall = Date.now()
@@ -94,8 +114,8 @@ function init() {
             return clockStartCt + elapsed
         }
 
-        // ─── Save (FIXED: single-object arg) ─────────────────────────────
-        function save(mediaId: number, episode: number, ct: number, dur: number, reason: string) {
+        // ─── Save ─────────────────────────────────────────────────────────
+        function save(mediaId: number, episode: number, ct: number, dur: number, kind: string, reason: string) {
             if (!mediaId || dur <= 0 || ct <= 0) {
                 debugLine.set("skip: mid=" + mediaId + " ct=" + Math.floor(ct) + " dur=" + Math.floor(dur))
                 tray.update()
@@ -103,14 +123,14 @@ function init() {
             }
             try {
                 ctx.continuity.updateWatchHistoryItem({
-                    kind:          "mediastream",
+                    kind:          kind,
                     filepath:      "",
                     mediaId:       mediaId,
                     episodeNumber: episode,
                     currentTime:   ct,
                     duration:      dur,
                 })
-                savedLine.set(fmtTime(ct) + " / " + fmtTime(dur) + " (" + reason + ")")
+                savedLine.set(fmtTime(ct) + " / " + fmtTime(dur) + " [" + kind + "] (" + reason + ")")
                 lastSaveMs = Date.now()
                 debugLine.set("saved at ct=" + Math.floor(ct) + " ep=" + episode)
                 tray.update()
@@ -132,7 +152,7 @@ function init() {
                 if (!rawState) {
                     if (trackedMediaId) {
                         // Lost state — do a final save then reset
-                        save(trackedMediaId, trackedEpisode, currentEstimate(), trackedDuration, "state-lost")
+                        save(trackedMediaId, trackedEpisode, currentEstimate(), trackedDuration, trackedKind, "state-lost")
                         trackedMediaId = null
                         isPlaying = false
                     }
@@ -144,11 +164,11 @@ function init() {
 
                 const mediaId = extractMediaId(rawState)
                 const episode = extractEpisode(rawState)
+                const kind    = extractKind(rawState)
                 const dur     = parseFloat(String(pick(rawStatus, "duration", "Duration") || 0))
 
                 if (!mediaId) {
                     statusLine.set("State exists but no mediaId")
-                    // Dump top-level keys for debugging
                     try {
                         const pi = pick(rawState, "playbackInfo", "PlaybackInfo")
                         debugLine.set("pi keys=" + (pi ? JSON.stringify(Object.keys(pi)) : "null"))
@@ -159,30 +179,30 @@ function init() {
 
                 // New video detected — start the clock
                 if (mediaId !== trackedMediaId) {
-                    // Use whatever ct getPlaybackStatus has as the starting point
-                    // (this is the restore-from-continuity position, e.g. 3s)
                     const initialCt = parseFloat(String(pick(rawStatus, "currentTime", "CurrentTime") || 0))
                     trackedMediaId  = mediaId
                     trackedEpisode  = episode
                     trackedDuration = dur
+                    trackedKind     = kind
                     resetClock(initialCt)
-                    statusLine.set("Started ep" + episode + " (id " + mediaId + ")")
+                    statusLine.set("Started ep" + episode + " [" + kind + "] (id " + mediaId + ")")
                     debugLine.set("clock started at ct=" + Math.floor(initialCt))
                     tray.update()
                     return
                 }
 
-                // Continuing same video
+                // Continuing same video — update kind in case stream type changed
+                trackedKind = kind
                 if (dur > 0) trackedDuration = dur
                 const ct = currentEstimate()
 
-                statusLine.set("Watching ep" + trackedEpisode + " @ " + fmtTime(ct))
+                statusLine.set("Watching ep" + trackedEpisode + " @ " + fmtTime(ct) + " [" + kind + "]")
                 debugLine.set("est ct=" + Math.floor(ct) + " dur=" + Math.floor(trackedDuration) + " wall+" + Math.floor((Date.now() - clockStartWall) / 1000) + "s")
                 tray.update()
 
                 const now = Date.now()
                 if (now - lastSaveMs >= SAVE_INTERVAL_MS && trackedDuration > 0 && ct > 0) {
-                    save(trackedMediaId, trackedEpisode, ct, trackedDuration, "auto")
+                    save(trackedMediaId, trackedEpisode, ct, trackedDuration, trackedKind, "auto")
                 }
 
             } catch (e) {
@@ -194,26 +214,29 @@ function init() {
         // ─── Video events: correct the clock when they DO arrive ──────────
 
         ctx.videoCore.addEventListener("video-status", (e: any) => {
-            // When a real status event arrives, sync our clock to actual position
             const ct  = parseFloat(String(pick(e, "currentTime", "CurrentTime") || 0))
             const dur = parseFloat(String(pick(e, "duration",    "Duration")    || 0))
             const psd = !!(pick(e, "paused", "Paused"))
             if (ct > 0) {
                 resetClock(ct)
                 if (psd) isPlaying = false
-                if (dur > 0) trackedDuration = dur
+                // Only cache duration if it's a real finite number — NaN/Infinity
+                // appear during HLS re-initialization after a stream switch.
+                if (dur > 0 && isFinite(dur)) trackedDuration = dur
             }
         })
 
         ctx.videoCore.addEventListener("video-loaded", (e: any) => {
-            const state = e.state || e.State
+            const state   = e.state || e.State
             const mediaId = extractMediaId(state)
             const episode = extractEpisode(state)
+            const kind    = extractKind(state)
             if (mediaId) {
                 trackedMediaId = mediaId
                 trackedEpisode = episode
+                trackedKind    = kind
                 resetClock(0)
-                statusLine.set("Loaded ep" + episode + " (id " + mediaId + ")")
+                statusLine.set("Loaded ep" + episode + " [" + kind + "] (id " + mediaId + ")")
                 tray.update()
             }
         })
@@ -223,18 +246,17 @@ function init() {
             const dur = parseFloat(String(pick(e, "duration",    "Duration")    || 0))
             if (ct > 0) resetClock(ct)
             isPlaying = false
-            if (dur > 0 && trackedDuration === 0) trackedDuration = dur
+            if (dur > 0 && isFinite(dur) && trackedDuration === 0) trackedDuration = dur
             statusLine.set("Paused ep" + trackedEpisode + " @ " + fmtTime(ct || currentEstimate()))
             tray.update()
             if (trackedMediaId) {
-                save(trackedMediaId, trackedEpisode, ct || currentEstimate(), trackedDuration, "paused")
+                save(trackedMediaId, trackedEpisode, ct || currentEstimate(), trackedDuration, trackedKind, "paused")
             }
         })
 
         ctx.videoCore.addEventListener("video-resumed", (_e: any) => {
             isPlaying = true
             clockStartWall = Date.now()
-            // Don't change clockStartCt — resume from where we paused
             statusLine.set("Watching ep" + trackedEpisode)
             tray.update()
         })
@@ -246,7 +268,7 @@ function init() {
 
         ctx.videoCore.addEventListener("video-terminated", (_e: any) => {
             if (trackedMediaId) {
-                save(trackedMediaId, trackedEpisode, currentEstimate(), trackedDuration, "closed")
+                save(trackedMediaId, trackedEpisode, currentEstimate(), trackedDuration, trackedKind, "closed")
             }
             trackedMediaId = null
             isPlaying = false
@@ -256,7 +278,7 @@ function init() {
 
         ctx.videoCore.addEventListener("video-ended", (_e: any) => {
             if (trackedMediaId) {
-                save(trackedMediaId, trackedEpisode, trackedDuration || currentEstimate(), trackedDuration, "ended")
+                save(trackedMediaId, trackedEpisode, trackedDuration || currentEstimate(), trackedDuration, trackedKind, "ended")
             }
             trackedMediaId = null
             isPlaying = false
