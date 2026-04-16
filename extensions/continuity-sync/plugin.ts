@@ -1,7 +1,7 @@
 /// <reference path="./plugin.d.ts" />
 
 /**
- * Continuity Sync v1.3.4
+ * Continuity Sync v1.3.5
  *
  * Root cause 1: on mobile Safari, getPlaybackStatus() returns stale data
  * (paused=true, currentTime=3) from the moment the video was loaded —
@@ -35,6 +35,17 @@
  * if the stream actually loaded. video-loaded also gates its snapshot on this
  * flag (which reflects the PREVIOUS stream's state at that point).
  *
+ * Root cause 5: when rawState is transiently null during error display (between
+ * video-terminated and the next video-loaded), the null-state poll path was
+ * clearing pendingRestoreCheck. When state returned, the first poll tick saw
+ * mediaId !== trackedMediaId (trackedMediaId was null'd) → "New video detected"
+ * → returned early without checking pendingRestoreCheck. By the time trackedMediaId
+ * matched, pendingRestoreCheck was false and the restore never ran.
+ *
+ * Root cause 5 fix: do not clear pendingRestoreCheck in the null-state path.
+ * It survives the null period so the next stable poll tick processes it.
+ * The "New video detected" early return just delays the check by one tick.
+ *
  * v1.1.0: detect playbackType so onlinestream saves use kind="onlinestream".
  * v1.2.0: restore fallback — no video-seeked after load = built-in skipped.
  * v1.3.0: lastGoodPosition snapshot fixes rapid provider/server switches.
@@ -42,10 +53,10 @@
  *         can read it — save the estimate instead of zeroing it out.
  * v1.3.3: fix 403 errors corrupting lastGoodPosition and continuity API —
  *         gate terminated save/snapshot on video-can-play confirmation.
- * v1.3.4: fix null-state poll path — when rawState is null during a server
- *         switch (error display), the poll was saving a near-zero position to
- *         the continuity API and clearing lastGoodPosition. Now gated on
- *         streamLoadedSuccessfully and no longer clears lastGoodPosition.
+ * v1.3.4: fix null-state poll saving near-zero position and clearing
+ *         lastGoodPosition — both gated on streamLoadedSuccessfully now.
+ * v1.3.5: fix null-state poll clearing pendingRestoreCheck — the restore
+ *         check was lost when state briefly went null during server switches.
  */
 function init() {
     $ui.register((ctx) => {
@@ -74,10 +85,20 @@ function init() {
         const BUFFER_HIDE_MS     = 5000
         const RESTORE_THRESHOLD  = 5
 
+        // ─── Event log (ring buffer, newest first) ─────────────────────────
+        // Abbreviations: T=terminated, L=loaded, C=can-play, R=restore,
+        // N=null-state, S=seeked, P=paused, E=ended
+        const evLog: string[] = []
+        function evPush(label: string) {
+            evLog.unshift(label)
+            if (evLog.length > 6) evLog.pop()
+        }
+
         // ─── Tray ─────────────────────────────────────────────────────────
         const statusLine = ctx.state("Polling...")
         const savedLine  = ctx.state("—")
         const debugLine  = ctx.state("—")
+        const evLogLine  = ctx.state("—")
 
         const tray = ctx.newTray({ tooltipText: "Continuity Sync", withContent: true })
         tray.render(() => tray.stack([
@@ -85,7 +106,8 @@ function init() {
             tray.text(statusLine.get(), { style: { fontSize: "0.8rem", color: "#aaa" } }),
             tray.text("Saved: " + savedLine.get(), { style: { fontSize: "0.8rem", color: "#aaa" } }),
             tray.text(debugLine.get(), { style: { fontSize: "0.75rem", color: "#666" } }),
-        ], { gap: 4, style: { width: "240px", padding: "10px" } }))
+            tray.text("ev: " + evLogLine.get(), { style: { fontSize: "0.7rem", color: "#555" } }),
+        ], { gap: 4, style: { width: "260px", padding: "10px" } }))
 
         // ─── Helpers ──────────────────────────────────────────────────────
         function fmtTime(s: number): string {
@@ -182,10 +204,12 @@ function init() {
         //     used when no snapshot exists (first load of a new session).
         function attemptRestoreFallback(mediaId: number, episode: number) {
             let restorePos = 0
+            let path = "none"
 
             // 1. Use our own snapshot if available
             if (lastGoodPosition > RESTORE_THRESHOLD) {
                 restorePos = lastGoodPosition
+                path = "lgp"
             }
 
             // 2. Fall back to continuity API
@@ -199,18 +223,26 @@ function init() {
                         const savedEp  = parseInt(String(pick(item, "episodeNumber", "EpisodeNumber") || 0), 10)
                         if (savedEp === episode && savedCt > RESTORE_THRESHOLD && savedDur > 0 && savedCt / savedDur < 0.9) {
                             restorePos = savedCt
+                            path = "api"
                         }
                     }
                 } catch (_) {}
             }
 
-            if (restorePos <= RESTORE_THRESHOLD) return
+            evPush("R" + Math.floor(restorePos) + "(" + path + ")")
+            evLogLine.set(evLog.join(">"))
+
+            if (restorePos <= RESTORE_THRESHOLD) {
+                debugLine.set("restore skip lgp=" + Math.floor(lastGoodPosition))
+                tray.update()
+                return
+            }
 
             ctx.videoCore.seekTo(restorePos)
             resetClock(restorePos)
             lastGoodPosition = 0
             statusLine.set("Restored ep" + episode + " @ " + fmtTime(restorePos))
-            debugLine.set("restore ct=" + Math.floor(restorePos))
+            debugLine.set("restore ct=" + Math.floor(restorePos) + " via " + path)
             tray.update()
         }
 
@@ -235,14 +267,17 @@ function init() {
                         trackedMediaId           = null
                         isPlaying                = false
                         streamLoadedSuccessfully = false
+                        evPush("N(sls=" + (streamLoadedSuccessfully ? "1" : "0") + ",lgp=" + Math.floor(lastGoodPosition) + ")")
+                        evLogLine.set(evLog.join(">"))
                     }
-                    pendingRestoreCheck = false
-                    // Do NOT clear lastGoodPosition here. rawState goes null briefly
-                    // during server switches (error display between terminated and
-                    // the next video-loaded). Clearing it at this point loses the
-                    // snapshot before the new stream can use it.
+                    // Do NOT clear pendingRestoreCheck here. rawState goes null briefly
+                    // during server switches (error display between terminated and the
+                    // next video-loaded). Clearing it would cancel the restore — when
+                    // state comes back, the poll first runs "New video detected" (early
+                    // return), so pendingRestoreCheck must still be true for the NEXT
+                    // tick to actually call attemptRestoreFallback.
                     statusLine.set("Idle")
-                    debugLine.set("no state")
+                    debugLine.set("no state prc=" + pendingRestoreCheck + " lgp=" + Math.floor(lastGoodPosition))
                     tray.update()
                     return
                 }
@@ -270,8 +305,11 @@ function init() {
                     trackedDuration = dur
                     trackedKind     = kind
                     resetClock(initialCt)
+                    // pendingRestoreCheck is intentionally NOT reset here —
+                    // if it was set by a prior video-loaded, it must survive
+                    // this "new video detected" tick and be processed next tick.
                     statusLine.set("Started ep" + episode + " [" + kind + "] (id " + mediaId + ")")
-                    debugLine.set("clock started at ct=" + Math.floor(initialCt))
+                    debugLine.set("clock started at ct=" + Math.floor(initialCt) + " prc=" + pendingRestoreCheck)
                     tray.update()
                     return
                 }
@@ -282,6 +320,8 @@ function init() {
                     if (!seekedAfterLoad) {
                         attemptRestoreFallback(mediaId, episode)
                     } else {
+                        evPush("Rskip(sal)")
+                        evLogLine.set(evLog.join(">"))
                         lastGoodPosition = 0
                     }
                 }
@@ -323,6 +363,9 @@ function init() {
             // Stream has buffered enough to start — the wall-clock estimate is now
             // meaningful and video-terminated should save/preserve position.
             streamLoadedSuccessfully = true
+            evPush("C")
+            evLogLine.set(evLog.join(">"))
+            tray.update()
         })
 
         ctx.videoCore.addEventListener("video-loaded", (e: any) => {
@@ -345,6 +388,9 @@ function init() {
                 // If estimated <= RESTORE_THRESHOLD or stream didn't load, keep
                 // lastGoodPosition as-is (a previous good switch may have set it).
 
+                evPush("L(lgp=" + Math.floor(lastGoodPosition) + ",sls=" + (streamLoadedSuccessfully ? "1" : "0") + ")")
+                evLogLine.set(evLog.join(">"))
+
                 streamLoadedSuccessfully = false  // reset for the incoming stream
                 trackedMediaId      = mediaId
                 trackedEpisode      = episode
@@ -363,6 +409,8 @@ function init() {
             if (ct > 0) resetClock(ct)
             isPlaying = false
             if (dur > 0 && isFinite(dur) && trackedDuration === 0) trackedDuration = dur
+            evPush("P" + Math.floor(ct || currentEstimate()))
+            evLogLine.set(evLog.join(">"))
             statusLine.set("Paused ep" + trackedEpisode + " @ " + fmtTime(ct || currentEstimate()))
             tray.update()
             if (trackedMediaId) {
@@ -380,7 +428,12 @@ function init() {
         ctx.videoCore.addEventListener("video-seeked", (e: any) => {
             const ct = parseFloat(String(pick(e, "currentTime", "CurrentTime") || 0))
             if (ct >= 0) resetClock(ct)
-            if (pendingRestoreCheck) seekedAfterLoad = true
+            if (pendingRestoreCheck) {
+                seekedAfterLoad = true
+                evPush("S" + Math.floor(ct) + "(prc)")
+                evLogLine.set(evLog.join(">"))
+                tray.update()
+            }
         })
 
         ctx.videoCore.addEventListener("video-terminated", (_e: any) => {
@@ -397,6 +450,8 @@ function init() {
                 }
                 // If ct is 0 (already reset), keep whatever lastGoodPosition was.
             }
+            evPush("T(sls=" + (streamLoadedSuccessfully ? "1" : "0") + ",lgp=" + Math.floor(lastGoodPosition) + ")")
+            evLogLine.set(evLog.join(">"))
             trackedMediaId           = null
             pendingRestoreCheck      = false
             isPlaying                = false
@@ -409,6 +464,8 @@ function init() {
             if (trackedMediaId) {
                 save(trackedMediaId, trackedEpisode, trackedDuration || currentEstimate(), trackedDuration, trackedKind, "ended")
             }
+            evPush("E")
+            evLogLine.set(evLog.join(">"))
             trackedMediaId           = null
             pendingRestoreCheck      = false
             lastGoodPosition         = 0
