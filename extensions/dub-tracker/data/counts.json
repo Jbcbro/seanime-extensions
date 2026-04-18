@@ -1,5 +1,5 @@
 {
-    "generatedAt": "2026-04-18T12:38:56.485Z",
+    "generatedAt": "2026-04-18T18:38:53.718Z",
     "source": "AniList + AniWatch-compatible API",
     "coverage": {
         "currentSeason": "SPRING",
@@ -8,14 +8,14 @@
         "previousSeasonYear": 2026,
         "seedIdsPath": "extensions/dub-tracker/data/seed-ids.json",
         "candidateCount": 424,
-        "entryCount": 90
+        "entryCount": 111
     },
     "entries": {
-        "235": {
-            "title": "Case Closed",
-            "status": "RELEASING",
-            "sub": 1197,
-            "dub": 123
+        "20": {
+            "title": "Naruto",
+            "status": "FINISHED",
+            "sub": 220,
+            "dub": 220
         },
         "269": {
             "title": "Bleach",
@@ -23,41 +23,35 @@
             "sub": 366,
             "dub": 366
         },
-        "1575": {
-            "title": "Code Geass: Lelouch of the Rebellion",
-            "status": "FINISHED",
-            "sub": 25,
-            "dub": 25
+        "966": {
+            "title": "Shin Chan",
+            "status": "RELEASING",
+            "sub": 78,
+            "dub": 78
         },
-        "3588": {
-            "title": "Soul Eater",
+        "1535": {
+            "title": "Death Note",
             "status": "FINISHED",
-            "sub": 51,
-            "dub": 51
+            "sub": 37,
+            "dub": 37
         },
-        "4224": {
-            "title": "Toradora!",
+        "1735": {
+            "title": "Naruto",
             "status": "FINISHED",
-            "sub": 25,
-            "dub": 25
+            "sub": 220,
+            "dub": 220
         },
-        "5114": {
-            "title": "Fullmetal Alchemist: Brotherhood",
-            "status": "FINISHED",
-            "sub": 64,
-            "dub": 64
+        "2406": {
+            "title": "Osomatsu-san 4th Season: Sou, Shuu, Hen",
+            "status": "RELEASING",
+            "sub": 1,
+            "dub": 0
         },
-        "9253": {
-            "title": "Steins;Gate",
+        "6702": {
+            "title": "Fairy Tail",
             "status": "FINISHED",
-            "sub": 24,
-            "dub": 24
-        },
-        "10620": {
-            "title": "The Future Diary",
-            "status": "FINISHED",
-            "sub": 26,
-            "dub": 26
+            "sub": 175,
+            "dub": 175
         },
         "11757": {
             "title": "Sword Art Online",
@@ -65,77 +59,89 @@
             "sub": 25,
             "dub": 25
         },
-        "14719": {
-            "title": "JoJo's Bizarre Adventure",
-            "status": "FINISHED",
-            "sub": 26,
-            "dub": 26
-        },
-        "14813": {
-            "title": "My Teen Romantic Comedy SNAFU",
-            "status": "FINISHED",
-            "sub": 13,
-            "dub": 13
-        },
         "15809": {
             "title": "The Devil is a Part-Timer!!",
             "status": "FINISHED",
             "sub": 12,
             "dub": 12
         },
-        "20464": {
-            "title": "Haikyu!!",
+        "20605": {
+            "title": "Tokyo Ghoul",
+            "status": "FINISHED",
+            "sub": 12,
+            "dub": 12
+        },
+        "20613": {
+            "title": "Akame ga Kill!",
+            "status": "FINISHED",
+            "sub": 24,
+            "dub": 24
+        },
+        "20623": {
+            "title": "Parasyte -the maxim-",
+            "status": "FINISHED",
+            "sub": 24,
+            "dub": 24
+        },
+        "20850": {
+            "title": "Tokyo Ghoul √A",
+            "status": "FINISHED",
+            "sub": 12,
+            "dub": 12
+        },
+        "21311": {
+            "title": "Bungo Stray Dogs",
+            "status": "FINISHED",
+            "sub": 12,
+            "dub": 12
+        },
+        "99263": {
+            "title": "The Rising of the Shield Hero",
             "status": "FINISHED",
             "sub": 25,
             "dub": 25
         },
-        "20594": {
-            "title": "Sword Art Online II",
+        "99750": {
+            "title": "I want to eat your pancreas",
+            "status": "FINISHED",
+            "sub": 1,
+            "dub": 1
+        },
+        "100166": {
+            "title": "My Hero Academia Final Season",
+            "status": "FINISHED",
+            "sub": 11,
+            "dub": 11
+        },
+        "101280": {
+            "title": "That Time I Got Reincarnated as a Slime",
             "status": "FINISHED",
             "sub": 24,
             "dub": 24
         },
-        "20789": {
-            "title": "The Seven Deadly Sins",
+        "101347": {
+            "title": "Dororo",
             "status": "FINISHED",
             "sub": 24,
             "dub": 24
         },
-        "21507": {
-            "title": "Mob Psycho 100",
+        "101759": {
+            "title": "The Promised Neverland",
             "status": "FINISHED",
             "sub": 12,
             "dub": 12
         },
-        "97668": {
-            "title": "One Punch Man",
+        "101922": {
+            "title": "Demon Slayer: Kimetsu no Yaiba",
             "status": "FINISHED",
-            "sub": 12,
-            "dub": 12
+            "sub": 26,
+            "dub": 26
         },
-        "104578": {
-            "title": "Attack on Titan Season 3",
+        "105333": {
+            "title": "Dr. Stone",
             "status": "FINISHED",
-            "sub": 22,
-            "dub": 22
-        },
-        "112936": {
-            "title": "Senpai wa Otokonoko Movie: Ame Nochi Hare",
-            "status": "RELEASING",
-            "sub": 4,
-            "dub": 0
-        },
-        "118123": {
-            "title": "Holo Graffiti",
-            "status": "RELEASING",
-            "sub": 166,
-            "dub": 0
-        },
-        "124082": {
-            "title": "Azur Lane",
-            "status": "RELEASING",
-            "sub": 12,
-            "dub": 12
+            "sub": 24,
+            "dub": 24
         },
         "128893": {
             "title": "Hell's Paradise",
@@ -143,23 +149,41 @@
             "sub": 13,
             "dub": 13
         },
-        "131573": {
-            "title": "Jujutsu Kaisen 0 Movie",
-            "status": "FINISHED",
-            "sub": 1,
+        "136862": {
+            "title": "Against The Sky Supreme",
+            "status": "RELEASING",
+            "sub": 360,
+            "dub": 0
+        },
+        "137653": {
+            "title": "Renegade Immortal",
+            "status": "RELEASING",
+            "sub": 136,
             "dub": 1
         },
-        "137683": {
-            "title": "Soul Land 2: Peerless Tang Sect",
+        "137662": {
+            "title": "Release that Witch",
             "status": "RELEASING",
-            "sub": 148,
+            "sub": 7,
             "dub": 0
         },
-        "140842": {
-            "title": "Chiikawa",
+        "138416": {
+            "title": "Blue Archive the Animation",
             "status": "RELEASING",
-            "sub": 280,
+            "sub": 12,
             "dub": 0
+        },
+        "142329": {
+            "title": "Demon Slayer: Entertainment District Arc",
+            "status": "FINISHED",
+            "sub": 11,
+            "dub": 11
+        },
+        "146004": {
+            "title": "AMAIM Warrior at the Borderline",
+            "status": "RELEASING",
+            "sub": 12,
+            "dub": 12
         },
         "147105": {
             "title": "Witch Hat Atelier",
@@ -173,10 +197,10 @@
             "sub": 13,
             "dub": 0
         },
-        "160701": {
-            "title": "There was a Cute Girl in the Hero's Party, so I Tried Confessing to Her",
+        "166219": {
+            "title": "Swallowed Star",
             "status": "RELEASING",
-            "sub": 13,
+            "sub": 26,
             "dub": 0
         },
         "167152": {
@@ -184,6 +208,18 @@
             "status": "FINISHED",
             "sub": 12,
             "dub": 12
+        },
+        "168946": {
+            "title": "My Demon Tyrant and Sweet Baby",
+            "status": "RELEASING",
+            "sub": 14,
+            "dub": 0
+        },
+        "169228": {
+            "title": "Hokuto no Ken: Fist of the North Star",
+            "status": "RELEASING",
+            "sub": 4,
+            "dub": 4
         },
         "169580": {
             "title": "I Made Friends with the Second Prettiest Girl in My Class",
@@ -209,6 +245,12 @@
             "sub": 5,
             "dub": 5
         },
+        "174634": {
+            "title": "Say \"I Love You\".",
+            "status": "RELEASING",
+            "sub": 13,
+            "dub": 13
+        },
         "176276": {
             "title": "Chained Soldier Season 2",
             "status": "FINISHED",
@@ -221,23 +263,23 @@
             "sub": 51,
             "dub": 0
         },
-        "177132": {
-            "title": "Hi☆sCoool! SeHa Girls",
-            "status": "FINISHED",
-            "sub": 13,
-            "dub": 0
-        },
-        "177501": {
-            "title": "A Hundred Scenes of Awajima",
+        "176907": {
+            "title": "Tomie",
             "status": "RELEASING",
             "sub": 2,
             "dub": 0
         },
-        "177634": {
-            "title": "Ace of Diamond Act II Season 2",
+        "177255": {
+            "title": "Mistress Kanan is Devilishly Easy",
             "status": "RELEASING",
-            "sub": 2,
+            "sub": 3,
             "dub": 0
+        },
+        "178707": {
+            "title": "The Irregular at Magic High School The Movie - The Girl Who Summons The Stars",
+            "status": "NOT_YET_RELEASED",
+            "sub": 1,
+            "dub": 1
         },
         "179950": {
             "title": "Petals of Reincarnation",
@@ -263,6 +305,12 @@
             "sub": 3,
             "dub": 1
         },
+        "182255": {
+            "title": "Frieren: Beyond Journey's End Season 2",
+            "status": "FINISHED",
+            "sub": 10,
+            "dub": 10
+        },
         "182300": {
             "title": "Wistoria: Wand and Sword Season 2",
             "status": "RELEASING",
@@ -275,34 +323,52 @@
             "sub": 2,
             "dub": 0
         },
+        "183661": {
+            "title": "Isekai Office Worker: The Other World's Books Depend on the Bean Counter",
+            "status": "FINISHED",
+            "sub": 12,
+            "dub": 0
+        },
+        "183984": {
+            "title": "The Case Book of Arne",
+            "status": "FINISHED",
+            "sub": 12,
+            "dub": 0
+        },
         "184492": {
             "title": "Welcome to Demon School! Iruma-kun Season 4",
             "status": "RELEASING",
-            "sub": 2,
+            "sub": 3,
             "dub": 2
         },
-        "185039": {
-            "title": "The Invisible Man and His Soon-to-Be Wife",
+        "185211": {
+            "title": "Yowayowa Teacher",
+            "status": "RELEASING",
+            "sub": 3,
+            "dub": 0
+        },
+        "185993": {
+            "title": "Noble Reincarnation: Born Blessed, So I'll Obtain Ultimate Power",
             "status": "FINISHED",
             "sub": 12,
             "dub": 0
         },
-        "185262": {
-            "title": "Hell Mode: The Hardcore Gamer Dominates in Another World with Garbage Balancing",
-            "status": "FINISHED",
-            "sub": 12,
-            "dub": 7
-        },
-        "185506": {
-            "title": "Attack No.1",
+        "186058": {
+            "title": "Kirakira☆Precure A La Mode",
             "status": "RELEASING",
-            "sub": 104,
+            "sub": 49,
             "dub": 0
         },
-        "185729": {
-            "title": "Against the Gods (2023)",
+        "186151": {
+            "title": "Yu-Gi-Oh! Card Game: The Chronicles",
             "status": "RELEASING",
-            "sub": 30,
+            "sub": 12,
+            "dub": 0
+        },
+        "186333": {
+            "title": "Kunon the Sorcerer Can See",
+            "status": "FINISHED",
+            "sub": 13,
             "dub": 0
         },
         "186497": {
@@ -311,29 +377,41 @@
             "sub": 3,
             "dub": 3
         },
-        "186827": {
-            "title": "The Klutzy Class Monitor and the Girl with the Short Skirt",
+        "187166": {
+            "title": "BanG Dream! Morfonication",
             "status": "RELEASING",
             "sub": 2,
             "dub": 0
         },
-        "187062": {
-            "title": "Oedo Fire Slayer: The Legend of Phoenix",
-            "status": "FINISHED",
-            "sub": 12,
+        "187869": {
+            "title": "Botan Kamiina Fully Blossoms When Drunk",
+            "status": "RELEASING",
+            "sub": 2,
             "dub": 0
         },
-        "187264": {
-            "title": "Jack-of-All-Trades, Party of None",
+        "187892": {
+            "title": "All You Need Is Kill",
             "status": "FINISHED",
-            "sub": 12,
-            "dub": 12
+            "sub": 1,
+            "dub": 1
         },
-        "187941": {
-            "title": "Reincarnated as a Dragon Hatchling",
-            "status": "FINISHED",
-            "sub": 12,
-            "dub": 5
+        "187989": {
+            "title": "Scum of the Brave",
+            "status": "RELEASING",
+            "sub": 14,
+            "dub": 0
+        },
+        "188035": {
+            "title": "Sound! Euphonium",
+            "status": "NOT_YET_RELEASED",
+            "sub": 14,
+            "dub": 14
+        },
+        "188529": {
+            "title": "Lily C.A.T.",
+            "status": "RELEASING",
+            "sub": 1,
+            "dub": 1
         },
         "189046": {
             "title": "Re:ZERO -Starting Life in Another World- Season 4",
@@ -341,34 +419,22 @@
             "sub": 2,
             "dub": 2
         },
-        "189259": {
-            "title": "Even Given the Worthless “Appraiser” Class, I’m Actually the Strongest",
-            "status": "FINISHED",
-            "sub": 12,
-            "dub": 12
-        },
-        "189275": {
-            "title": "Medalist Season 2",
-            "status": "FINISHED",
-            "sub": 9,
-            "dub": 8
-        },
-        "189956": {
-            "title": "Kusunoki's Garden of Gods",
-            "status": "FINISHED",
-            "sub": 2,
-            "dub": 0
-        },
         "190143": {
             "title": "Agents of the Four Seasons: Dance of Spring",
             "status": "RELEASING",
-            "sub": 3,
+            "sub": 4,
             "dub": 1
         },
         "190704": {
             "title": "Mistress Kanan is Devilishly Easy",
             "status": "RELEASING",
-            "sub": 2,
+            "sub": 3,
+            "dub": 0
+        },
+        "191967": {
+            "title": "Hell Teacher: Jigoku Sensei Nube",
+            "status": "FINISHED",
+            "sub": 13,
             "dub": 0
         },
         "192808": {
@@ -383,34 +449,40 @@
             "sub": 3,
             "dub": 1
         },
-        "194393": {
-            "title": "I Want to End this Love Game",
-            "status": "RELEASING",
-            "sub": 1,
-            "dub": 0
+        "195518": {
+            "title": "The Villainess Is Adored by the Prince of the Neighbor Kingdom",
+            "status": "FINISHED",
+            "sub": 12,
+            "dub": 12
         },
         "195600": {
             "title": "Daemons of the Shadow Realm",
             "status": "RELEASING",
-            "sub": 2,
+            "sub": 3,
             "dub": 2
         },
-        "196012": {
-            "title": "Mao",
+        "196029": {
+            "title": "Kusunoki's Garden of Gods",
             "status": "RELEASING",
-            "sub": 2,
+            "sub": 3,
             "dub": 0
         },
-        "196840": {
-            "title": "Iya na Kao sare nagara Opantsu Misete Moraitai",
-            "status": "NOT_YET_RELEASED",
-            "sub": 6,
-            "dub": 0
+        "196750": {
+            "title": "Sister Princess",
+            "status": "RELEASING",
+            "sub": 26,
+            "dub": 26
         },
         "196935": {
             "title": "Akane-banashi",
             "status": "RELEASING",
-            "sub": 2,
+            "sub": 3,
+            "dub": 0
+        },
+        "196974": {
+            "title": "The Classroom of a Black Cat and a Witch",
+            "status": "RELEASING",
+            "sub": 1,
             "dub": 0
         },
         "197754": {
@@ -419,10 +491,22 @@
             "sub": 2,
             "dub": 0
         },
+        "197824": {
+            "title": "Farming Life in Another World",
+            "status": "RELEASING",
+            "sub": 12,
+            "dub": 12
+        },
         "198374": {
             "title": "A Misanthrope Teaches a Class for Demi-Humans",
             "status": "FINISHED",
             "sub": 13,
+            "dub": 12
+        },
+        "199005": {
+            "title": "Those Who Hunt Elves II",
+            "status": "FINISHED",
+            "sub": 12,
             "dub": 12
         },
         "199221": {
@@ -430,6 +514,12 @@
             "status": "RELEASING",
             "sub": 3,
             "dub": 3
+        },
+        "199411": {
+            "title": "B.King",
+            "status": "RELEASING",
+            "sub": 10,
+            "dub": 0
         },
         "199547": {
             "title": "Marriagetoxin",
@@ -443,10 +533,10 @@
             "sub": 2,
             "dub": 0
         },
-        "200556": {
-            "title": "High School! Kimengumi (2026)",
-            "status": "FINISHED",
-            "sub": 12,
+        "200769": {
+            "title": "The Strongest Job is Apparently Not a Hero or a Sage, but an Appraiser (Provisional)!",
+            "status": "RELEASING",
+            "sub": 4,
             "dub": 0
         },
         "200930": {
@@ -455,29 +545,59 @@
             "sub": 1,
             "dub": 1
         },
-        "201090": {
-            "title": "Ghost Concert: Missing Songs",
-            "status": "RELEASING",
-            "sub": 2,
-            "dub": 0
-        },
-        "201910": {
-            "title": "Space Dandy",
-            "status": "RELEASING",
-            "sub": 13,
-            "dub": 13
+        "201903": {
+            "title": "Cosmic Princess Kaguya!",
+            "status": "FINISHED",
+            "sub": 1,
+            "dub": 1
         },
         "202102": {
             "title": "Needy Girl Overdose",
             "status": "RELEASING",
-            "sub": 2,
+            "sub": 3,
             "dub": 0
         },
-        "202955": {
-            "title": "Love Through a Prism",
+        "202419": {
+            "title": "You Don't Know Gunma Yet",
             "status": "FINISHED",
-            "sub": 20,
-            "dub": 20
+            "sub": 1,
+            "dub": 0
+        },
+        "203100": {
+            "title": "Himitsu no AiPri",
+            "status": "FINISHED",
+            "sub": 51,
+            "dub": 0
+        },
+        "203127": {
+            "title": "Princess Principal: Crown Handler - Chapter 4",
+            "status": "FINISHED",
+            "sub": 1,
+            "dub": 0
+        },
+        "203148": {
+            "title": "Hoppe-chan: Sun Oukoku to Kuro Hoppe-dan no Himitsu",
+            "status": "FINISHED",
+            "sub": 0,
+            "dub": 0
+        },
+        "203296": {
+            "title": "Cardfight!! Vanguard: Divinez Parallactic Clash",
+            "status": "FINISHED",
+            "sub": 12,
+            "dub": 0
+        },
+        "203472": {
+            "title": "xxxHOLiC The Movie: A Midsummer Night's Dream",
+            "status": "FINISHED",
+            "sub": 1,
+            "dub": 1
+        },
+        "204270": {
+            "title": "Evangelion 30th Anniversary Special",
+            "status": "FINISHED",
+            "sub": 1,
+            "dub": 0
         },
         "204319": {
             "title": "The Boy and the Heron",
@@ -491,10 +611,16 @@
             "sub": 13,
             "dub": 13
         },
-        "205676": {
-            "title": "Black Jack",
+        "206857": {
+            "title": "Attack No.1",
             "status": "FINISHED",
-            "sub": 12,
+            "sub": 104,
+            "dub": 0
+        },
+        "206895": {
+            "title": "The Three-Body Problem",
+            "status": "RELEASING",
+            "sub": 15,
             "dub": 0
         },
         "206914": {
@@ -503,44 +629,44 @@
             "sub": 2,
             "dub": 2
         },
-        "206951": {
-            "title": "My Melody and Kuromi",
-            "status": "RELEASING",
-            "sub": 12,
-            "dub": 12
-        },
-        "207084": {
-            "title": "Playing Sister",
-            "status": "RELEASING",
-            "sub": 1,
-            "dub": 0
-        },
-        "207675": {
-            "title": "Beyond Twilight",
-            "status": "RELEASING",
-            "sub": 2,
-            "dub": 0
-        },
-        "208064": {
-            "title": "The Sovereign's Ascension",
-            "status": "RELEASING",
-            "sub": 45,
-            "dub": 0
-        },
-        "208105": {
-            "title": "Mayoi Neko Overrun! Specials",
-            "status": "RELEASING",
-            "sub": 6,
-            "dub": 0
-        },
         "208361": {
             "title": "City The Animation",
             "status": "NOT_YET_RELEASED",
             "sub": 13,
             "dub": 13
         },
+        "208517": {
+            "title": "Does It Count If You Lose Your Innocence to an Android?",
+            "status": "FINISHED",
+            "sub": 8,
+            "dub": 0
+        },
+        "209982": {
+            "title": "Alma-chan Wants to Have a Family!",
+            "status": "NOT_YET_RELEASED",
+            "sub": 11,
+            "dub": 0
+        },
+        "210031": {
+            "title": "You and I Are Polar Opposites",
+            "status": "NOT_YET_RELEASED",
+            "sub": 12,
+            "dub": 12
+        },
+        "210116": {
+            "title": "Atelier Ryza: Ever Darkness & the Secret Hideout The Animation",
+            "status": "NOT_YET_RELEASED",
+            "sub": 12,
+            "dub": 0
+        },
         "210234": {
             "title": "Monster Eater",
+            "status": "RELEASING",
+            "sub": 3,
+            "dub": 0
+        },
+        "210375": {
+            "title": "The Regression of Great Sage Riddle",
             "status": "RELEASING",
             "sub": 3,
             "dub": 0
