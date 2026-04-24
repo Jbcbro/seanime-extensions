@@ -1,11 +1,11 @@
 {
     "id": "jbcbro-dub-tracker",
     "name": "Dub Tracker",
-    "version": "5.0.0",
+    "version": "6.0.0",
     "manifestURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/dub-tracker/manifest.json",
     "language": "typescript",
     "type": "plugin",
-    "description": "Shows CC and DUB episode counts on anime thumbnails.",
+    "description": "Shows CC and estimated DUB episode counts on anime thumbnails, backed by MyDubList.",
     "author": "Jbcbro",
     "icon": "https://raw.githubusercontent.com/Bas1874/MyDubList-Seanime/refs/heads/main/src/icons/logo.png",
     "payloadURI": "https://raw.githubusercontent.com/Jbcbro/seanime-extensions/main/extensions/dub-tracker/plugin.ts",
@@ -16,9 +16,9 @@
                 "networkAccess": {
                     "allowedDomains": [
                         "graphql.anilist.co",
-                        "aniwatch-api.jc-server.com"
+                        "raw.githubusercontent.com"
                     ],
-                    "reasoning": "Uses AniList title lookup and AniWatch-compatible search to resolve visible anime cards."
+                    "reasoning": "AniList maps card IDs to MAL IDs + episode data; MyDubList (static JSON on GitHub raw) indicates whether an English dub exists."
                 },
                 "unsafeFlags": [
                     {

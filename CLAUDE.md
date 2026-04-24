@@ -4,6 +4,14 @@ This repo contains plugins for [Seanime](https://seanime.rahim.app) — an anime
 
 Extensions docs: https://seanime.gitbook.io/seanime-extensions
 
+## Agent Instructions
+
+- Always consult the Seanime Extensions docs before making assumptions about plugin APIs, tray components, permissions, hooks, DOM helpers, or manifest format: https://seanime.gitbook.io/seanime-extensions
+- If repo code and memory conflict with the docs, treat the docs as the default source of truth unless the current repo clearly targets a newer Seanime API.
+- When adding or updating plugins, verify API usage against the docs first, then keep `plugin.ts` and `manifest.json` in sync.
+
+
+
 ---
 
 ## Extension Types

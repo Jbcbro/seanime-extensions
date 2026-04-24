@@ -3,15 +3,20 @@
 /**
  * Dub Tracker
  *
- * Scans visible anime cards, resolves counts for their AniList IDs, then
- * renders CC / DUB badges on the thumbnail.
+ * Shows CC and estimated DUB episode badges on anime thumbnails.
+ *
+ * Data source: MyDubList (https://github.com/Joelis57/MyDubList) — a static
+ * multi-source anime dub database. MyDubList records whether a dub EXISTS per
+ * language (not per-episode counts), so dub episode numbers are estimated:
+ *   aired = (nextAiringEpisode.episode - 1) if airing, else episodes
+ *   CC    = aired
+ *   DUB   = aired if the MAL ID appears in MyDubList's English dub index
  */
 function init() {
     $ui.register(async (ctx) => {
-        const API_OPTIONS = [
-            { label: "Aniwatch API", value: "https://aniwatch-api.jc-server.com" },
-            { label: "Anime DB", value: "https://anime-db.videasy.net" },
-        ]
+        const MDL_URL = "https://raw.githubusercontent.com/Joelis57/MyDubList/main/dubs/counts/dubbed_english.json"
+        const CACHE_KEY = "dt-mdl-english-v1"
+        const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
         const SELECTOR = [
             "[data-media-entry-card-body='true']",
@@ -22,17 +27,20 @@ function init() {
         ].join(", ")
 
         const debugRef = ctx.fieldRef("false")
-        const apiRef = ctx.fieldRef("https://aniwatch-api.jc-server.com")
         const statusState = ctx.state("Starting")
         const detailState = ctx.state("Idle")
         const cardsFound = ctx.state(0)
         const badgesAdded = ctx.state(0)
         const queueSize = ctx.state(0)
 
+        // AniList id -> { sub, dub } (already estimated)
         const countsByMediaId = new Map<string, { sub: number; dub: number } | null>()
         const queuedIds = new Set<string>()
         let scanInProgress = false
         let resolveInProgress = false
+
+        // MyDubList MAL id -> source confirmation count. Any entry means "dub exists".
+        let dubIndex: Record<string, number> = {}
 
         function isDebug() {
             return debugRef.current === "true"
@@ -50,7 +58,7 @@ function init() {
 
         tray.render(() => tray.stack([
             tray.text("Dub Tracker", { style: { fontWeight: "bold", fontSize: "1rem" } }),
-            tray.select("API Host", { options: API_OPTIONS, fieldRef: apiRef }),
+            tray.text("Source: MyDubList (english)", { style: { fontSize: "0.75rem", color: "#888" } }),
             tray.select("Debug Mode", {
                 options: [{ label: "Off", value: "false" }, { label: "On", value: "true" }],
                 fieldRef: debugRef,
@@ -58,8 +66,47 @@ function init() {
             tray.text("Status: " + statusState.get(), { style: { fontSize: "0.8rem", color: "#888" } }),
             tray.text(detailState.get(), { style: { fontSize: "0.75rem", color: "#888" } }),
             tray.text("Cards: " + cardsFound.get() + " | Badges: " + badgesAdded.get() + " | Queue: " + queueSize.get(), { style: { fontSize: "0.8rem", color: "#888" } }),
+            tray.button("Refresh dub data", { onClick: "refresh-mdl", style: { width: "100%" } }),
             tray.button("Rescan", { onClick: "rescan", intent: "primary", style: { width: "100%" } }),
         ], { gap: 6, style: { width: "250px", padding: "10px" } }))
+
+        async function loadDubIndex(forceRefresh: boolean): Promise<void> {
+            try {
+                if (!forceRefresh) {
+                    const cached = $storage.get<{ data: Record<string, number>; ts: number }>(CACHE_KEY)
+                    if (cached && cached.data && (Date.now() - cached.ts) < CACHE_TTL_MS) {
+                        dubIndex = cached.data
+                        detailState.set("Loaded " + Object.keys(dubIndex).length + " dubs (cached)")
+                        tray.update()
+                        return
+                    }
+                }
+
+                statusState.set("Fetching dub index")
+                tray.update()
+
+                const res = await ctx.fetch(MDL_URL)
+                if (res.status !== 200) {
+                    detailState.set("MyDubList fetch failed: " + res.status)
+                    tray.update()
+                    return
+                }
+                const data = await res.json()
+                dubIndex = data || {}
+                $storage.set(CACHE_KEY, { data: dubIndex, ts: Date.now() })
+                detailState.set("Loaded " + Object.keys(dubIndex).length + " dubs")
+                tray.update()
+            } catch (e) {
+                dbg("dub index error: " + e)
+                detailState.set("Dub index error")
+                tray.update()
+            }
+        }
+
+        ctx.registerEventHandler("refresh-mdl", async () => {
+            await loadDubIndex(true)
+            await scanNow("Refresh")
+        })
 
         ctx.registerEventHandler("rescan", async () => {
             const processed = await ctx.dom.query("[data-sdt-checked='true']")
@@ -140,75 +187,51 @@ function init() {
             return null
         }
 
-        function normalizeTitle(value: string): string {
-            return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
-        }
-
-        async function resolveCountsForMediaId(mediaId: string): Promise<{ sub: number; dub: number } | null> {
-            if (countsByMediaId.has(mediaId)) return countsByMediaId.get(mediaId) || null
+        async function resolveBatch(mediaIds: string[]): Promise<void> {
+            const intIds = mediaIds.map((s) => parseInt(s, 10)).filter((n) => !isNaN(n))
+            if (!intIds.length) return
 
             try {
-                const aniRes = await ctx.fetch("https://graphql.anilist.co", {
+                const res = await ctx.fetch("https://graphql.anilist.co", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        query: "query($id:Int){Media(id:$id){title{english romaji native}}}",
-                        variables: { id: parseInt(mediaId, 10) },
+                        query: "query($ids:[Int]){Page(page:1,perPage:50){media(id_in:$ids,type:ANIME){id idMal episodes status nextAiringEpisode{episode}}}}",
+                        variables: { ids: intIds },
                     }),
                 })
-                const aniData = await aniRes.json()
-                const titles = [
-                    aniData?.data?.Media?.title?.english,
-                    aniData?.data?.Media?.title?.romaji,
-                    aniData?.data?.Media?.title?.native,
-                ].filter(Boolean)
-                const title = titles[0] || ""
+                const data = await res.json()
+                const list = data?.data?.Page?.media || []
+                const seen = new Set<string>()
 
-                if (!title) {
-                    countsByMediaId.set(mediaId, null)
-                    return null
+                for (const m of list) {
+                    const id = String(m.id)
+                    seen.add(id)
+
+                    const total = typeof m.episodes === "number" ? m.episodes : 0
+                    const next = m.nextAiringEpisode?.episode
+                    const aired = typeof next === "number" && next > 0
+                        ? Math.max(0, next - 1)
+                        : total
+
+                    const hasDub = m.idMal != null && Object.prototype.hasOwnProperty.call(dubIndex, String(m.idMal))
+
+                    const sub = aired
+                    const dub = hasDub ? aired : 0
+
+                    countsByMediaId.set(id, sub > 0 || dub > 0 ? { sub, dub } : null)
                 }
 
-                const searchRes = await ctx.fetch(apiRef.current + "/api/v2/hianime/search?q=" + encodeURIComponent(title))
-                if (searchRes.status !== 200) {
-                    detailState.set("API search failed: " + searchRes.status)
-                    tray.update()
-                    countsByMediaId.set(mediaId, null)
-                    return null
+                for (const id of mediaIds) {
+                    if (!seen.has(id) && !countsByMediaId.has(id)) {
+                        countsByMediaId.set(id, null)
+                    }
                 }
-
-                const searchData = await searchRes.json()
-                const animes = searchData?.data?.animes || []
-                if (!animes.length) {
-                    countsByMediaId.set(mediaId, null)
-                    return null
-                }
-
-                const normalizedTitles = titles.map(normalizeTitle)
-                const match = animes.find((a: any) => normalizedTitles.includes(normalizeTitle(a?.name || ""))) ||
-                    animes.find((a: any) => normalizedTitles.some((t: string) => normalizeTitle(a?.name || "").includes(t) || t.includes(normalizeTitle(a?.name || "")))) ||
-                    animes[0]
-
-                const eps = match?.episodes
-                if (!eps) {
-                    countsByMediaId.set(mediaId, null)
-                    return null
-                }
-
-                const result = {
-                    sub: typeof eps.sub === "number" ? eps.sub : 0,
-                    dub: typeof eps.dub === "number" ? eps.dub : 0,
-                }
-                countsByMediaId.set(mediaId, result)
-                detailState.set((match?.name || title) + " → CC " + result.sub + " / DUB " + result.dub)
-                tray.update()
-                return result
             } catch (e) {
-                dbg("resolve error: " + e)
-                detailState.set("Resolve error")
-                tray.update()
-                countsByMediaId.set(mediaId, null)
-                return null
+                dbg("anilist batch error: " + e)
+                for (const id of mediaIds) {
+                    if (!countsByMediaId.has(id)) countsByMediaId.set(id, null)
+                }
             }
         }
 
@@ -239,9 +262,12 @@ function init() {
                 await wrapper.setProperty("style",
                     "position:absolute;top:6px;left:4px;z-index:10;display:flex;flex-direction:column;gap:2px;pointer-events:none;"
                 )
+                const dubBadge = counts.dub > 0
+                    ? '<span style="display:inline-block;background:#1d4ed8;color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;line-height:1.6;">DUB: ' + counts.dub + '</span>'
+                    : ''
                 await wrapper.setProperty("innerHTML",
                     '<span style="display:inline-block;background:#047857;color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;line-height:1.6;">CC: ' + counts.sub + '</span>' +
-                    '<span style="display:inline-block;background:#1d4ed8;color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;line-height:1.6;">DUB: ' + counts.dub + '</span>'
+                    dubBadge
                 )
                 await target.setStyle("position", "relative")
                 await target.append(wrapper)
@@ -261,12 +287,13 @@ function init() {
             tray.update()
 
             try {
-                for (let i = 0; i < ids.length; i++) {
-                    const mediaId = ids[i]
+                const BATCH = 40
+                for (let i = 0; i < ids.length; i += BATCH) {
+                    const slice = ids.slice(i, i + BATCH)
                     queueSize.set(ids.length - i)
                     tray.update()
-                    await resolveCountsForMediaId(mediaId)
-                    queuedIds.delete(mediaId)
+                    await resolveBatch(slice)
+                    for (const id of slice) queuedIds.delete(id)
                 }
             } finally {
                 resolveInProgress = false
@@ -343,6 +370,7 @@ function init() {
             }
         }
 
+        await loadDubIndex(false)
         await injectStyles()
 
         ctx.dom.observe(SELECTOR, async (elements) => {
@@ -362,6 +390,6 @@ function init() {
         statusState.set("Running")
         detailState.set("Watching cards")
         tray.update()
-        ctx.toast.info("Dub Tracker loaded")
+        ctx.toast.info("Dub Tracker loaded (MyDubList)")
     })
 }
