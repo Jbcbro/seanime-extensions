@@ -37,17 +37,16 @@ class Provider {
     }
 
     getSettings(): Settings {
-        // "kite" returns a true HLS master playlist with multi-bitrate
-        // variants (1080p / 720p / 360p), so HLS.js can adaptive-bitrate
-        // down when bandwidth dips — playback recovers instead of stalling.
-        // "pahe" returns single-quality, AES-128 encrypted media playlists
-        // with no ABR; if the picked quality outpaces bandwidth, the player
-        // stalls. Keeping pahe as a manual fallback for episodes where kite
-        // is unavailable. Seanime calls findEpisodeServer once per name in
-        // serial, so we keep the list short to avoid blowing up cold-cache
-        // load times against animetsu's slow /oppai.
+        // Only declare "kite" to the user. It returns a real HLS master
+        // playlist with three ABR variants (1080/720/360), so HLS.js
+        // switches down on bandwidth dips instead of stalling. The other
+        // animetsu servers (pahe, meg, kiss) return single-quality
+        // playlists with no master/variants — the player can't ABR and
+        // playback stalls on any bandwidth blip. They're still wired up
+        // as in-process fallbacks inside findEpisodeServer for the rare
+        // case kite has no sources for a given episode.
         return {
-            episodeServers: ["kite", "pahe"],
+            episodeServers: ["kite"],
             supportsDub: true,
         }
     }
