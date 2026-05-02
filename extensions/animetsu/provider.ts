@@ -6,17 +6,26 @@
 //   GET  /v2/api/anime/search/?query={q}                -> { results: [{ id, title:{romaji,english,native}, ... }] }
 //   GET  /v2/api/anime/info/{mongoId}                   -> { id, anilist_id, mal_id, title, ... }
 //   GET  /v2/api/anime/eps/{mongoId}                    -> [{ ep_num, name, id, ... }]
-//   GET  /v2/api/anime/servers/{mongoId}/{ep}           -> [{ id, default, tip }]
 //   GET  /v2/api/anime/oppai/{mongoId}/{ep}?server={s}&source_type={sub|dub}
 //                                                      -> { sources: [{ url, quality, type, need_proxy }] }
 //
 // All requests require Origin/Referer headers pointing at https://animetsu.live.
 // Sources flagged need_proxy must be prepended with https://swiftstream.top/proxy.
+//
+// Performance notes: Animetsu's /oppai endpoint can take 5+s on cold cache and
+// Seanime calls findEpisodeServer once per server in episodeServers, in serial.
+// To minimize wall time we (a) cache anilist→mongoId so subsequent loads of
+// the same anime skip the search/info calls entirely, and (b) skip the
+// /servers preflight — Seanime already passes us a server name from settings.
 class Provider {
     apiBase = "https://animetsu.live/v2/api/anime"
     siteBase = "https://animetsu.live"
     proxyBase = "https://swiftstream.top/proxy"
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    // Process-lifetime cache: AniList id -> Animetsu mongoId. Persisted as
+    // long as the extension stays loaded.
+    private mongoIdByAnilist: Record<string, string> = {}
 
     private apiHeaders(): Record<string, string> {
         return {
@@ -36,35 +45,50 @@ class Provider {
 
     async search(opts: SearchOptions): Promise<SearchResult[]> {
         const tag = opts.dub ? "dub" : "sub"
+        const cacheKey = String(opts.media.id)
+
+        // Fast path: we already resolved this AniList id.
+        const cached = this.mongoIdByAnilist[cacheKey]
+        if (cached) {
+            return [{
+                id: `${cached}/${tag}`,
+                title: opts.media.englishTitle || opts.media.romajiTitle || "Unknown",
+                url: `${this.siteBase}/watch/${cached}`,
+                subOrDub: tag,
+            }]
+        }
 
         const norm = (s: string | undefined | null) =>
             (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "")
 
-        const queries: string[] = []
+        const targetEn = norm(opts.media.englishTitle)
+        const targetRo = norm(opts.media.romajiTitle)
+
+        // Try the most-likely query first; only fall back if it returns nothing.
+        const tryQueries: string[] = []
         const pushQ = (q: string | undefined | null) => {
             if (!q) return
-            if (queries.indexOf(q) === -1) queries.push(q)
+            if (tryQueries.indexOf(q) === -1) tryQueries.push(q)
         }
         pushQ(opts.media.englishTitle ?? undefined)
         pushQ(opts.media.romajiTitle)
         pushQ(opts.query)
-        for (const syn of (opts.media.synonyms || []).slice(0, 2)) pushQ(syn)
 
-        const targetEn = norm(opts.media.englishTitle)
-        const targetRo = norm(opts.media.romajiTitle)
+        const fetchSearch = async (q: string) => {
+            const url = `${this.apiBase}/search/?query=${encodeURIComponent(q)}`
+            try {
+                const data = await fetch(url, { headers: this.apiHeaders() }).then(r => r.json())
+                return (data && data.results) || []
+            } catch {
+                return []
+            }
+        }
 
-        const results: { mongoId: string; title: string; score: number }[] = []
+        type Cand = { mongoId: string; title: string; score: number; tEn: string; tRo: string }
+        const results: Cand[] = []
         const seen = new Set<string>()
 
-        for (const q of queries) {
-            const url = `${this.apiBase}/search/?query=${encodeURIComponent(q)}`
-            let data: any
-            try {
-                data = await fetch(url, { headers: this.apiHeaders() }).then(r => r.json())
-            } catch {
-                continue
-            }
-            const items = (data && data.results) || []
+        const ingest = (items: any[]) => {
             for (const r of items) {
                 if (!r?.id || seen.has(r.id)) continue
                 seen.add(r.id)
@@ -81,22 +105,44 @@ class Provider {
                     mongoId: r.id,
                     title: r?.title?.english || r?.title?.romaji || r?.title?.native || "Unknown",
                     score,
+                    tEn,
+                    tRo,
                 })
             }
         }
 
+        for (const q of tryQueries) {
+            const items = await fetchSearch(q)
+            ingest(items)
+            if (results.length > 0) break // good enough; don't pay for extra queries
+        }
         if (results.length === 0) return []
         results.sort((a, b) => b.score - a.score)
 
-        // Probe top candidates' /info to find the one whose anilist_id matches.
-        // This is more accurate than fuzzy title matching alone.
-        const top = results.slice(0, 6)
-        for (const c of top) {
+        // Single high-confidence title match? Skip the /info probe entirely.
+        const top = results[0]
+        if (
+            results.length === 1 ||
+            top.score >= 95 && (results.length < 2 || results[1].score < top.score)
+        ) {
+            this.mongoIdByAnilist[cacheKey] = top.mongoId
+            return [{
+                id: `${top.mongoId}/${tag}`,
+                title: top.title,
+                url: `${this.siteBase}/watch/${top.mongoId}`,
+                subOrDub: tag,
+            }]
+        }
+
+        // Ambiguous: probe the top few /info responses to find the entry whose
+        // anilist_id actually matches.
+        for (const c of results.slice(0, 4)) {
             try {
                 const info = await fetch(`${this.apiBase}/info/${c.mongoId}`, {
                     headers: this.apiHeaders(),
                 }).then(r => r.json())
                 if (info?.anilist_id === opts.media.id) {
+                    this.mongoIdByAnilist[cacheKey] = c.mongoId
                     return [{
                         id: `${c.mongoId}/${tag}`,
                         title: info?.title?.english || info?.title?.romaji || c.title,
@@ -109,8 +155,9 @@ class Provider {
             }
         }
 
-        // No anilist match — return top fuzzy candidates.
-        return top.slice(0, 5).map(c => ({
+        // No exact anilist match — return top fuzzy candidates and let Seanime
+        // try them in order.
+        return results.slice(0, 5).map(c => ({
             id: `${c.mongoId}/${tag}`,
             title: c.title,
             url: `${this.siteBase}/watch/${c.mongoId}`,
@@ -151,31 +198,12 @@ class Provider {
         const tag = parts[2]
         const sourceType = tag === "dub" ? "dub" : "sub"
 
-        const wantedServer = (!server || server === "default") ? "" : server
-
-        // Resolve which server to hit. If the caller asked for "default", use
-        // animetsu's own default flag. If they named a specific one, use it
-        // verbatim — fall back to the default if the named one isn't offered
-        // for this episode.
-        let serverId = wantedServer
-        try {
-            const list: any[] = await fetch(
-                `${this.apiBase}/servers/${mongoId}/${epNum}`,
-                { headers: this.apiHeaders() },
-            ).then(r => r.json())
-            if (Array.isArray(list)) {
-                if (!serverId) {
-                    const def = list.find(s => s?.default) || list[0]
-                    serverId = def?.id || "pahe"
-                } else if (!list.some(s => s?.id === serverId)) {
-                    const def = list.find(s => s?.default) || list[0]
-                    if (def?.id) serverId = def.id
-                }
-            }
-        } catch {
-            // continue with whatever we had
-        }
-        if (!serverId) serverId = "pahe"
+        // Trust the requested server name. Seanime always passes a name from
+        // episodeServers (or "default"). The /servers preflight just adds an
+        // extra round-trip that we'd then call /oppai with the same name on
+        // anyway; if the server is wrong, /oppai returns no sources and we
+        // throw — Seanime moves on to the next server.
+        const serverId = (!server || server === "default") ? "pahe" : server
 
         const oppaiUrl = `${this.apiBase}/oppai/${mongoId}/${epNum}?server=${encodeURIComponent(serverId)}&source_type=${sourceType}`
         const data = await fetch(oppaiUrl, { headers: this.apiHeaders() }).then(r => r.json())
