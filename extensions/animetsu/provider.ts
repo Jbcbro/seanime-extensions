@@ -37,8 +37,15 @@ class Provider {
     }
 
     getSettings(): Settings {
+        // Animetsu's /oppai endpoint takes 3-5s on cold cache. Seanime calls
+        // findEpisodeServer once per name in this list (in serial) before
+        // it can render the player, so listing all 4 servers turns a 5s wait
+        // into a 15-20s wait. "pahe" is animetsu's own default and the
+        // fastest path. The other servers (kite, meg, kiss) still exist on
+        // animetsu's side; if pahe ever stops returning sources we can add
+        // a runtime fallback inside findEpisodeServer.
         return {
-            episodeServers: ["pahe", "kite", "meg", "kiss"],
+            episodeServers: ["pahe"],
             supportsDub: true,
         }
     }
@@ -198,18 +205,35 @@ class Provider {
         const tag = parts[2]
         const sourceType = tag === "dub" ? "dub" : "sub"
 
-        // Trust the requested server name. Seanime always passes a name from
-        // episodeServers (or "default"). The /servers preflight just adds an
-        // extra round-trip that we'd then call /oppai with the same name on
-        // anyway; if the server is wrong, /oppai returns no sources and we
-        // throw — Seanime moves on to the next server.
-        const serverId = (!server || server === "default") ? "pahe" : server
+        // Trust the requested server name. Seanime passes a name from
+        // episodeServers (or "default"). We hit /oppai directly for the
+        // primary; if it returns no sources, fall back through the rest of
+        // animetsu's known servers in-process — that's still cheaper than
+        // listing all of them in episodeServers (which would force Seanime
+        // to call findEpisodeServer once per name in serial, on every load).
+        const primary = (!server || server === "default") ? "pahe" : server
+        const fallbackChain = primary === "pahe"
+            ? ["pahe", "kite", "meg", "kiss"]
+            : [primary, "pahe", "kite", "meg", "kiss"]
 
-        const oppaiUrl = `${this.apiBase}/oppai/${mongoId}/${epNum}?server=${encodeURIComponent(serverId)}&source_type=${sourceType}`
-        const data = await fetch(oppaiUrl, { headers: this.apiHeaders() }).then(r => r.json())
-        const sources = (data && Array.isArray(data.sources)) ? data.sources : []
+        let serverId = ""
+        let sources: any[] = []
+        for (const candidate of fallbackChain) {
+            const oppaiUrl = `${this.apiBase}/oppai/${mongoId}/${epNum}?server=${encodeURIComponent(candidate)}&source_type=${sourceType}`
+            try {
+                const data = await fetch(oppaiUrl, { headers: this.apiHeaders() }).then(r => r.json())
+                const got = (data && Array.isArray(data.sources)) ? data.sources : []
+                if (got.length > 0) {
+                    serverId = candidate
+                    sources = got
+                    break
+                }
+            } catch {
+                // try next
+            }
+        }
         if (sources.length === 0) {
-            throw new Error(`animetsu: no ${sourceType} sources from server "${serverId}"`)
+            throw new Error(`animetsu: no ${sourceType} sources on any server`)
         }
 
         const videoSources = sources.map((s: any) => {
