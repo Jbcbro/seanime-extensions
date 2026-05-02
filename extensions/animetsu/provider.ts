@@ -127,8 +127,12 @@ class Provider {
         const data = await fetch(url, { headers: this.apiHeaders() }).then(r => r.json())
         const eps = Array.isArray(data) ? data : []
 
+        // Animetsu sometimes lists fractional ep_nums (e.g. 1035.5) for
+        // recaps/specials. Seanime's EpisodeDetails.number is an int, so we
+        // only keep whole-number episodes; the fractional ones don't map to
+        // AniList's episode numbering anyway.
         return eps
-            .filter((e: any) => typeof e?.ep_num === "number")
+            .filter((e: any) => typeof e?.ep_num === "number" && Number.isInteger(e.ep_num))
             .map((e: any) => ({
                 id: `${mongoId}|${e.ep_num}|${tag}`,
                 number: e.ep_num,
