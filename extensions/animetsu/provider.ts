@@ -37,15 +37,17 @@ class Provider {
     }
 
     getSettings(): Settings {
-        // Animetsu's /oppai endpoint takes 3-5s on cold cache. Seanime calls
-        // findEpisodeServer once per name in this list (in serial) before
-        // it can render the player, so listing all 4 servers turns a 5s wait
-        // into a 15-20s wait. "pahe" is animetsu's own default and the
-        // fastest path. The other servers (kite, meg, kiss) still exist on
-        // animetsu's side; if pahe ever stops returning sources we can add
-        // a runtime fallback inside findEpisodeServer.
+        // "kite" returns a true HLS master playlist with multi-bitrate
+        // variants (1080p / 720p / 360p), so HLS.js can adaptive-bitrate
+        // down when bandwidth dips — playback recovers instead of stalling.
+        // "pahe" returns single-quality, AES-128 encrypted media playlists
+        // with no ABR; if the picked quality outpaces bandwidth, the player
+        // stalls. Keeping pahe as a manual fallback for episodes where kite
+        // is unavailable. Seanime calls findEpisodeServer once per name in
+        // serial, so we keep the list short to avoid blowing up cold-cache
+        // load times against animetsu's slow /oppai.
         return {
-            episodeServers: ["pahe"],
+            episodeServers: ["kite", "pahe"],
             supportsDub: true,
         }
     }
@@ -211,10 +213,13 @@ class Provider {
         // animetsu's known servers in-process — that's still cheaper than
         // listing all of them in episodeServers (which would force Seanime
         // to call findEpisodeServer once per name in serial, on every load).
-        const primary = (!server || server === "default") ? "pahe" : server
-        const fallbackChain = primary === "pahe"
-            ? ["pahe", "kite", "meg", "kiss"]
-            : [primary, "pahe", "kite", "meg", "kiss"]
+        // "kite" preferred for default because it gives a master playlist
+        // with proper ABR; "pahe" is single-quality and stalls on bandwidth
+        // dips, so we only fall back to it when kite has nothing.
+        const primary = (!server || server === "default") ? "kite" : server
+        const fallbackChain = primary === "kite"
+            ? ["kite", "pahe", "meg", "kiss"]
+            : [primary, "kite", "pahe", "meg", "kiss"]
 
         let serverId = ""
         let sources: any[] = []
