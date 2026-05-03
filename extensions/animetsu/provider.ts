@@ -206,15 +206,6 @@ class Provider {
         const tag = parts[2]
         const sourceType = tag === "dub" ? "dub" : "sub"
 
-        // Trust the requested server name. Seanime passes a name from
-        // episodeServers (or "default"). We hit /oppai directly for the
-        // primary; if it returns no sources, fall back through the rest of
-        // animetsu's known servers in-process — that's still cheaper than
-        // listing all of them in episodeServers (which would force Seanime
-        // to call findEpisodeServer once per name in serial, on every load).
-        // "kite" preferred for default because it gives a master playlist
-        // with proper ABR; "pahe" is single-quality and stalls on bandwidth
-        // dips, so we only fall back to it when kite has nothing.
         const primary = (!server || server === "default") ? "kite" : server
         const fallbackChain = primary === "kite"
             ? ["kite", "pahe", "meg", "kiss"]
@@ -240,13 +231,79 @@ class Provider {
             throw new Error(`animetsu: no ${sourceType} sources on any server`)
         }
 
-        const videoSources = sources.map((s: any) => {
-            let src: string = s?.url || ""
-            if (s?.need_proxy && src) {
-                src = src.indexOf("http") === 0
-                    ? src
-                    : (this.proxyBase + (src.charAt(0) === "/" ? src : "/" + src))
+        const baseHeaders = {
+            "Origin": this.siteBase,
+            "Referer": this.siteBase + "/",
+            "User-Agent": this.ua,
+        }
+
+        // Build the absolute URL for one of animetsu's source entries (which
+        // come back as proxy-relative paths when need_proxy=true).
+        const resolveUrl = (s: any): string => {
+            const src: string = s?.url || ""
+            if (!src) return ""
+            if (src.indexOf("http") === 0) return src
+            if (s?.need_proxy) {
+                return this.proxyBase + (src.charAt(0) === "/" ? src : "/" + src)
             }
+            return src
+        }
+
+        // Special-case the master-playlist servers: kite/kiss return a single
+        // entry whose URL is an HLS master with 1080/720/360 variants.
+        // Seanime's player has ABR disabled and unconditionally locks to the
+        // highest variant — so a master playlist effectively forces every
+        // user onto 1080p, which stalls whenever their bandwidth falls below
+        // the 1080p bitrate.
+        //
+        // To give the user real quality choice, fetch the master, parse the
+        // variants, and return each as a separate VideoSource with an
+        // explicit `quality` label. Order [720p, 1080p, 360p] so the
+        // player's "first source" default lands on the most sustainable
+        // quality for typical home connections.
+        const isMasterServer = serverId === "kite" || serverId === "kiss"
+        const looksLikeMaster = (sources.length === 1) &&
+            (sources[0]?.quality === "master" || sources[0]?.quality === "auto" || !sources[0]?.quality)
+
+        if (isMasterServer && looksLikeMaster) {
+            const masterUrl = resolveUrl(sources[0])
+            try {
+                const masterText = await fetch(masterUrl, { headers: baseHeaders }).then(r => r.text())
+                const variants = parseMasterVariants(masterText, masterUrl)
+                if (variants.length > 0) {
+                    // Order: 720p first (default), then 1080p, then anything
+                    // smaller. Falls back to whatever order the server gave
+                    // us for unfamiliar resolutions.
+                    const rank = (h: number) => {
+                        if (h === 720) return 0
+                        if (h === 1080) return 1
+                        if (h === 480) return 2
+                        if (h === 360) return 3
+                        if (h === 240) return 4
+                        return 10
+                    }
+                    variants.sort((a, b) => rank(a.height) - rank(b.height))
+
+                    return {
+                        server: serverId,
+                        headers: baseHeaders,
+                        videoSources: variants.map(v => ({
+                            url: v.url,
+                            type: "m3u8",
+                            quality: `${v.height}p`,
+                            subtitles: [],
+                        })),
+                    }
+                }
+                // Couldn't parse — fall through to returning the master
+                // as-is.
+            } catch {
+                // network failure — fall through
+            }
+        }
+
+        const videoSources = sources.map((s: any) => {
+            const src = resolveUrl(s)
             const isHls = (s?.type || "").toLowerCase().indexOf("mpegurl") !== -1 || src.indexOf(".m3u8") !== -1
             return {
                 url: src,
@@ -258,12 +315,50 @@ class Provider {
 
         return {
             server: serverId,
-            headers: {
-                "Origin": this.siteBase,
-                "Referer": this.siteBase + "/",
-                "User-Agent": this.ua,
-            },
+            headers: baseHeaders,
             videoSources,
         }
     }
+}
+
+// parseMasterVariants pulls (resolution, absolute URL) pairs out of an HLS
+// master playlist. Resolves relative variant URIs against the master URL.
+function parseMasterVariants(text: string, masterUrl: string): { height: number; url: string }[] {
+    if (!text || text.indexOf("#EXTM3U") === -1) return []
+
+    const lines = text.split(/\r?\n/)
+    const out: { height: number; url: string }[] = []
+    let pendingHeight = 0
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
+        if (line.indexOf("#EXT-X-STREAM-INF:") === 0) {
+            const m = line.match(/RESOLUTION=\d+x(\d+)/i)
+            pendingHeight = m ? parseInt(m[1], 10) : 0
+            continue
+        }
+        if (line && line.charAt(0) !== "#") {
+            const url = resolveAgainst(masterUrl, line.trim())
+            if (url) out.push({ height: pendingHeight, url })
+            pendingHeight = 0
+        }
+    }
+    return out
+}
+
+// resolveAgainst resolves a (possibly relative) URI against a base URL,
+// without depending on URL APIs that may not be available in Goja.
+function resolveAgainst(base: string, ref: string): string {
+    if (!ref) return base
+    if (ref.indexOf("http://") === 0 || ref.indexOf("https://") === 0) return ref
+    if (ref.charAt(0) === "/") {
+        const m = base.match(/^(https?:\/\/[^/]+)/i)
+        return m ? m[1] + ref : base + ref
+    }
+    // Relative — drop the last path segment of base and append ref.
+    const q = base.indexOf("?")
+    const cleanBase = q >= 0 ? base.substring(0, q) : base
+    const lastSlash = cleanBase.lastIndexOf("/")
+    if (lastSlash < 0) return cleanBase + "/" + ref
+    return cleanBase.substring(0, lastSlash + 1) + ref
 }
