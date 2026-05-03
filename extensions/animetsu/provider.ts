@@ -271,23 +271,31 @@ class Provider {
                 const masterText = await fetch(masterUrl, { headers: baseHeaders }).then(r => r.text())
                 const variants = parseMasterVariants(masterText, masterUrl)
                 if (variants.length > 0) {
-                    // Order: 720p first (default), then 1080p, then anything
-                    // smaller. Falls back to whatever order the server gave
-                    // us for unfamiliar resolutions.
+                    // Drop 1080p entirely. Chromium's MediaSource quota
+                    // is ~150 MB per video stream — fixed by the browser
+                    // and not overridable. At 1080p (~1.6 Mbps) that's
+                    // only ~10 minutes of forward buffer before the
+                    // browser evicts back-buffer to make room, which
+                    // shows up as a brief mid-playback pause. 720p
+                    // (~0.9 Mbps) fits ~17 min of forward buffer in the
+                    // same quota — enough that a typical 24-min episode
+                    // hits the boundary at most once and often not at
+                    // all. 360p stays as the bandwidth-limited fallback.
+                    const filtered = variants.filter(v => v.height !== 1080)
+                    const eligible = filtered.length > 0 ? filtered : variants
                     const rank = (h: number) => {
                         if (h === 720) return 0
-                        if (h === 1080) return 1
-                        if (h === 480) return 2
-                        if (h === 360) return 3
-                        if (h === 240) return 4
+                        if (h === 480) return 1
+                        if (h === 360) return 2
+                        if (h === 240) return 3
                         return 10
                     }
-                    variants.sort((a, b) => rank(a.height) - rank(b.height))
+                    eligible.sort((a, b) => rank(a.height) - rank(b.height))
 
                     return {
                         server: serverId,
                         headers: baseHeaders,
-                        videoSources: variants.map(v => ({
+                        videoSources: eligible.map(v => ({
                             url: v.url,
                             type: "m3u8",
                             quality: `${v.height}p`,
