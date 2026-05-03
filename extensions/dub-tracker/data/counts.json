@@ -1,5 +1,5 @@
 {
-    "generatedAt": "2026-05-03T01:15:14.041Z",
+    "generatedAt": "2026-05-03T07:11:17.993Z",
     "source": "AniList + AniWatch-compatible API",
     "coverage": {
         "currentSeason": "SPRING",
@@ -7,7 +7,7 @@
         "previousSeason": "WINTER",
         "previousSeasonYear": 2026,
         "seedIdsPath": "extensions/dub-tracker/data/seed-ids.json",
-        "candidateCount": 427,
+        "candidateCount": 423,
         "entryCount": 0
     },
     "entries": {}
